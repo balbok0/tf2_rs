@@ -1,0 +1,14 @@
+[package]
+name = "tf2_rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4.38"
+derive_builder = "0.20.0"
+nalgebra = "0.33.0"
+thiserror = "1.0.63"
+
+[dev-dependencies]
+approx = "0.5.1"
+rand = "0.8.5"
