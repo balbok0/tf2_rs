@@ -3,8 +3,8 @@ use nalgebra::{UnitQuaternion, Vector3};
 
 use crate::types::CompactFrameID;
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TransformStorage {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TransformStorage {
     pub(crate) rotation: UnitQuaternion<f64>,
     pub(crate) translation: Vector3<f64>,
     pub(crate) stamp: DateTime<Utc>,
@@ -49,9 +49,5 @@ impl TransformStorage {
             frame_id,
             child_frame_id,
         }
-    }
-
-    pub(crate) fn empty(&self) {
-
     }
 }

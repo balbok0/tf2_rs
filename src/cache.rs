@@ -4,12 +4,150 @@ use derive_builder::Builder;
 use crate::{error::TF2Error, time::time_to_sec, transform_storage::TransformStorage, types::CompactFrameID};
 
 
+pub trait TimeCacheInterface {
+    fn get_data(
+        &self,
+        time: &DateTime<Utc>,
+    ) -> Result<Option<TransformStorage>, TF2Error>;
+
+    fn insert_data(
+        &mut self,
+        new_data: &TransformStorage,
+    ) -> bool;
+
+    fn clear_list(&mut self);
+
+    fn get_parent(
+        &self,
+        time: &DateTime<Utc>,
+    ) -> Result<Option<CompactFrameID>, TF2Error>;
+
+    fn get_latest_timestamp(&self) -> Option<DateTime<Utc>>;
+
+    fn get_oldest_timestamp(&self) -> Option<DateTime<Utc>>;
+
+}
+
 #[derive(Debug, Clone, Builder, PartialEq)]
 pub struct TimeCache {
     #[builder(default = "vec![]")]
     storage: Vec<TransformStorage>,
     #[builder(default = "Duration::seconds(10)")]
     max_storage_time: Duration,
+}
+
+impl TimeCacheInterface for TimeCache {
+    fn get_latest_timestamp(&self) -> Option<DateTime<Utc>> {
+        self.storage.first().map(|tfs| tfs.stamp)
+    }
+
+    fn get_oldest_timestamp(&self) -> Option<DateTime<Utc>> {
+        self.storage.last().map(|tfs| tfs.stamp)
+    }
+
+    fn get_data(
+        &self,
+        time: &DateTime<Utc>,
+    ) -> Result<Option<TransformStorage>, TF2Error> {
+
+        let closest_result = self.find_closest(time)?;
+
+        match closest_result.len() {
+            0 => Ok(None),
+            1 => Ok(Some(*closest_result[0])),
+            2 => {
+                let first = closest_result[0];
+                let second = closest_result[1];
+                if first.frame_id == second.frame_id {
+                    Ok(Some(self.interpolate(first, second, time)))
+                } else {
+                    Ok(Some(*first))
+                }
+            }
+            _ => panic!("Never should happen!")
+        }
+    }
+
+    fn get_parent(
+        &self,
+        time: &DateTime<Utc>,
+    ) -> Result<Option<CompactFrameID>, TF2Error> {
+        let closest_frames = self.find_closest(time)?;
+        Ok(closest_frames.first().map(|v| v.frame_id))
+    }
+
+    fn insert_data(
+        &mut self,
+        new_data: &TransformStorage,
+    ) -> bool {
+        // TODO: Finish me
+        // From original TF2: https://github.com/ros2/geometry2/blob/ros2/tf2/src/cache.cpp#L251-L258
+        // In order to minimize the number of times we iterate over this data, we:
+        // (1) Prune all old data first, regardless if new_data is added,
+        // (2) We use find_if to scan from newest to oldest, and stop at the first
+        //     point where the timestamp is equal or older to new_data's.
+        // (3) From this point, we scan with more expensive full equality checks to
+        //     ensure we do not reinsert the same exact data.
+        // (4) If we the data is not duplicated, then we simply insert new_data at
+        //     the point found in (2).
+
+        // (1) Prune all old data first, regardless if new_data is added,
+        self.prune_list();
+
+        // (2) We use binary search to scan from newest to oldest, and stop at the first
+        //     point where the timestamp is equal or older to new_data's.
+        let insertion_pos = match self.storage.binary_search_by_key(
+            &(-new_data.stamp.timestamp(), -(new_data.stamp.timestamp_subsec_nanos() as i64)),
+            |v| (-v.stamp.timestamp(), -(v.stamp.timestamp_subsec_nanos() as i64))
+        ) {
+            Ok(idx) => {
+                // (3) From this point, we scan with more expensive full equality checks to
+                //     ensure we do not reinsert the same exact data.
+
+                let mut got_match = false;
+                // Traverse from idx forward and backward to see if there is a match
+                let mut back_idx = idx;
+                // Backwards
+                while !got_match && self.storage[back_idx].stamp == new_data.stamp {
+                    if &self.storage[back_idx] == new_data {
+                        got_match = true;
+                    }
+                    if back_idx == 0 {
+                        break;
+                    }
+                    back_idx -= 1;
+                }
+
+                let mut forward_idx = idx + 1;
+                while !got_match && forward_idx < self.storage.len() && self.storage[forward_idx].stamp == new_data.stamp {
+                    if &self.storage[forward_idx] == new_data {
+                        got_match = true;
+                    }
+                    forward_idx -= 1;
+                }
+
+                if got_match {
+                    None
+                } else {
+                    Some(idx)
+                }
+            },
+            Err(idx) => Some(idx),
+        };
+
+        // (4) If we the data is not duplicated, then we simply insert new_data at
+        //     the point found in (2).
+        if let Some(idx) = insertion_pos {
+            self.storage.insert(idx, *new_data);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn clear_list(&mut self) {
+        self.storage.clear()
+    }
 }
 
 impl TimeCache {
@@ -31,9 +169,6 @@ impl TimeCache {
         self.storage.len()
     }
 
-    pub fn clear_list(&mut self) {
-        self.storage.clear()
-    }
 
     fn find_closest(
         &self,
@@ -100,27 +235,27 @@ impl TimeCache {
             |v| (-v.stamp.timestamp(), -(v.stamp.timestamp_subsec_nanos() as i64))
         ) {
             Ok(idx) => {
-                return Ok(vec![self.storage.get(idx).unwrap()])
+                Ok(vec![self.storage.get(idx).unwrap()])
             },
             Err(idx) => {
-                return Ok(
+                Ok(
                     vec![
                         self.storage.get(idx).unwrap(),
                         self.storage.get(idx - 1).unwrap(),
                     ]
                 )
             },
-        };
+        }
     }
 
-    fn interpolate<'a, 'b>(
+    fn interpolate(
         &self,
         first: &TransformStorage,
         second: &TransformStorage,
         time: &DateTime<Utc>,
     ) -> TransformStorage {
         if first.stamp == second.stamp {
-            return first.clone();
+            return *first;
         }
 
         let first_stamp = time_to_sec(&first.stamp);
@@ -137,7 +272,7 @@ impl TimeCache {
         TransformStorage {
             rotation,
             translation,
-            stamp: time.clone(),
+            stamp: *time,
             frame_id: first.frame_id,
             child_frame_id: second.frame_id,
         }
@@ -174,113 +309,6 @@ impl TimeCache {
         }
     }
 
-    pub fn get_latest_timestamp(&self) -> Option<DateTime<Utc>> {
-        self.storage.first().map(|tfs| tfs.stamp)
-    }
-
-    pub fn get_oldest_timestamp(&self) -> Option<DateTime<Utc>> {
-        self.storage.last().map(|tfs| tfs.stamp)
-    }
-
-    pub fn get_data(
-        &self,
-        time: &DateTime<Utc>,
-    ) -> Result<Option<TransformStorage>, TF2Error> {
-
-        let closest_result = self.find_closest(time)?;
-
-        match closest_result.len() {
-            0 => return Ok(None),
-            1 => return Ok(Some(closest_result[0].clone())),
-            2 => {
-                let first = closest_result[0];
-                let second = closest_result[1];
-                if first.frame_id == second.frame_id {
-                    return Ok(Some(self.interpolate(first, second, time)));
-                } else {
-                    return Ok(Some(first.clone()))
-                }
-            }
-            _ => panic!("Never should happen!")
-        }
-    }
-
-    pub fn get_parent(
-        &self,
-        time: &DateTime<Utc>,
-    ) -> Result<Option<CompactFrameID>, TF2Error> {
-        let closest_frames = self.find_closest(time)?;
-        Ok(closest_frames.first().map(|v| v.frame_id))
-    }
-
-    pub fn insert_data(
-        &mut self,
-        new_data: &TransformStorage,
-    ) -> bool {
-        // TODO: Finish me
-        // From original TF2: https://github.com/ros2/geometry2/blob/ros2/tf2/src/cache.cpp#L251-L258
-        // In order to minimize the number of times we iterate over this data, we:
-        // (1) Prune all old data first, regardless if new_data is added,
-        // (2) We use find_if to scan from newest to oldest, and stop at the first
-        //     point where the timestamp is equal or older to new_data's.
-        // (3) From this point, we scan with more expensive full equality checks to
-        //     ensure we do not reinsert the same exact data.
-        // (4) If we the data is not duplicated, then we simply insert new_data at
-        //     the point found in (2).
-
-        // (1) Prune all old data first, regardless if new_data is added,
-        self.prune_list();
-
-        // (2) We use binary search to scan from newest to oldest, and stop at the first
-        //     point where the timestamp is equal or older to new_data's.
-        let insertion_pos = match self.storage.binary_search_by_key(
-            &(-new_data.stamp.timestamp(), -(new_data.stamp.timestamp_subsec_nanos() as i64)),
-            |v| (-v.stamp.timestamp(), -(v.stamp.timestamp_subsec_nanos() as i64))
-        ) {
-            Ok(idx) => {
-                // (3) From this point, we scan with more expensive full equality checks to
-                //     ensure we do not reinsert the same exact data.
-
-                let mut got_match = false;
-                // Traverse from idx forward and backward to see if there is a match
-                let mut back_idx = idx;
-                // Backwards
-                while !got_match && self.storage[back_idx].stamp == new_data.stamp {
-                    if &self.storage[back_idx] == new_data {
-                        got_match = true;
-                    }
-                    if back_idx == 0 {
-                        break;
-                    }
-                    back_idx -= 1;
-                }
-
-                let mut forward_idx = idx + 1;
-                while !got_match && forward_idx < self.storage.len() && self.storage[forward_idx].stamp == new_data.stamp {
-                    if &self.storage[forward_idx] == new_data {
-                        got_match = true;
-                    }
-                    forward_idx -= 1;
-                }
-
-                if got_match {
-                    None
-                } else {
-                    Some(idx)
-                }
-            },
-            Err(idx) => Some(idx),
-        };
-
-        // (4) If we the data is not duplicated, then we simply insert new_data at
-        //     the point found in (2).
-        if let Some(idx) = insertion_pos {
-            self.storage.insert(idx, new_data.clone());
-            true
-        } else {
-            false
-        }
-    }
 
 }
 
