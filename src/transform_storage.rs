@@ -68,19 +68,19 @@ impl TransformStorage {
             (first_ratio * first.translation[2]) + (second_ratio * second.translation[2]),
         ];
         let first_quat = UnitQuaternion::from_quaternion(Quaternion::new(
+            first.rotation[3],
             first.rotation[0],
             first.rotation[1],
             first.rotation[2],
-            first.rotation[3],
         ));
         let second_quat = UnitQuaternion::from_quaternion(Quaternion::new(
+            second.rotation[3],
             second.rotation[0],
             second.rotation[1],
             second.rotation[2],
-            second.rotation[3],
         ));
 
-        let rotation = first_quat.slerp(&second_quat, first_ratio);
+        let rotation = first_quat.slerp(&second_quat, second_ratio);
 
 
         TransformStorage {
@@ -88,7 +88,7 @@ impl TransformStorage {
                 rotation[0],
                 rotation[1],
                 rotation[2],
-                rotation[3]
+                rotation[3],
             ],
             translation,
             stamp: time,

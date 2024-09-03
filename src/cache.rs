@@ -1,7 +1,6 @@
-use chrono::{Duration};
 use derive_builder::Builder;
 
-use crate::{error::TF2Error, time::time_to_sec, transform_storage::TransformStorage, types::CompactFrameID};
+use crate::{error::TF2Error, transform_storage::TransformStorage, types::CompactFrameID};
 
 
 pub trait TimeCacheInterface {
@@ -255,7 +254,7 @@ impl TimeCache {
 mod tests {
     use chrono::TimeDelta;
     use nalgebra::{Quaternion, UnitQuaternion, Vector3};
-    use rand::{self, Rng};
+    use rand::{self, Rng, SeedableRng as _};
 
     use super::*;
 
@@ -513,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_time_cache_cartesian_interpolation() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(32);
 
         let runs = 100;
         let epsilon = 2e-6;
@@ -556,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_time_cache_reparenting_interpolation_protection() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(32);
 
         let runs = 100;
         let epsilon = 1e-6;
@@ -602,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_time_cache_angular_interpolation() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(32);
 
         let runs = 100;
         let epsilon = 1e-6;
@@ -642,10 +641,10 @@ mod tests {
               let ground_truth = quats[0].slerp(&quats[1], pos as f64 / 100.0);
 
               let stor_rotation = UnitQuaternion::from_quaternion(Quaternion::new(
+                stor.rotation[3],
                 stor.rotation[0],
                 stor.rotation[1],
                 stor.rotation[2],
-                stor.rotation[3],
               ));
 
               approx::assert_relative_eq!(0.0, ground_truth.angle_to(&stor_rotation), epsilon = epsilon);
