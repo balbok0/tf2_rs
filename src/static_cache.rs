@@ -17,9 +17,9 @@ impl StaticCache {
         }
     }
 
-    pub fn get_data(&self, time: &DateTime<Utc>) -> TransformStorage {
+    pub fn get_data(&self, time: u64) -> TransformStorage {
         let mut data_out = self.storage;
-        data_out.stamp = *time;
+        data_out.stamp = time;
         data_out
     }
 
@@ -53,16 +53,13 @@ impl StaticCache {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, TimeDelta};
-    use nalgebra::{UnitQuaternion, Vector3};
-
     use super::*;
 
-    fn make_item(nanosec: i64, frame_id: u32) -> TransformStorage {
+    fn make_item(nanosec: u64, frame_id: u32) -> TransformStorage {
         TransformStorage::new(
-            UnitQuaternion::identity(),
-            Vector3::zeros(),
-            chrono::DateTime::UNIX_EPOCH + TimeDelta::nanoseconds(nanosec),
+            [0., 0., 0., 1.],
+            [0., 0., 0.],
+            nanosec,
             frame_id,
             0,
         )
@@ -78,9 +75,9 @@ mod tests {
         for i in 1..runs {
             cache.insert_data(make_item(i, i as u32));
 
-            let stor = cache.get_data(&(DateTime::UNIX_EPOCH + Duration::nanoseconds(i)));
+            let stor = cache.get_data(i as u64);
             assert_eq!(stor.frame_id, i as u32);
-            assert_eq!(stor.stamp.timestamp_nanos_opt().unwrap(), i);
+            assert_eq!(stor.stamp, i as u64);
         }
     }
 
@@ -91,7 +88,7 @@ mod tests {
 
         cache.insert_data(stor);
 
-        let stor_out = cache.get_data(&(DateTime::UNIX_EPOCH + Duration::nanoseconds(1)));
+        let stor_out = cache.get_data(1);
 
         assert_eq!(stor_out.frame_id, stor.frame_id);
         assert_eq!(stor_out.stamp, stor.stamp);

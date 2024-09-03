@@ -1,13 +1,13 @@
 use chrono::{DateTime, Utc};
-use nalgebra::{UnitQuaternion, Vector3};
+use nalgebra::{Quaternion, UnitQuaternion};
 
 use crate::types::CompactFrameID;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransformStorage {
-    pub(crate) rotation: UnitQuaternion<f64>,
-    pub(crate) translation: Vector3<f64>,
-    pub(crate) stamp: DateTime<Utc>,
+    pub(crate) rotation: [f64; 4],
+    pub(crate) translation: [f64; 3],
+    pub(crate) stamp: u64,
     pub(crate) frame_id: CompactFrameID,
     pub(crate) child_frame_id: CompactFrameID,
 }
@@ -30,15 +30,15 @@ impl PartialOrd for TransformStorage {
             Some(core::cmp::Ordering::Equal) => {}
             ord => return ord,
         }
-        self.rotation.magnitude().partial_cmp(&other.rotation.magnitude())
+        self.rotation.partial_cmp(&other.rotation)
     }
 }
 
 impl TransformStorage {
     pub fn new(
-        rotation: UnitQuaternion<f64>,
-        translation: Vector3<f64>,
-        stamp: DateTime<Utc>,
+        rotation: [f64; 4],
+        translation: [f64; 3],
+        stamp: u64,
         frame_id: CompactFrameID,
         child_frame_id: CompactFrameID,
     ) -> Self {
@@ -48,6 +48,52 @@ impl TransformStorage {
             stamp,
             frame_id,
             child_frame_id,
+        }
+    }
+
+    pub fn interpolate(
+        first: &Self,
+        second: &Self,
+        time: u64
+    ) -> TransformStorage {
+        if first.stamp == second.stamp {
+            return *first;
+        }
+        let second_ratio = (time as f64 - first.stamp as f64) / (second.stamp as f64 - first.stamp as f64);
+        let first_ratio = 1. - second_ratio;
+
+        let translation = [
+            (first_ratio * first.translation[0]) + (second_ratio * second.translation[0]),
+            (first_ratio * first.translation[1]) + (second_ratio * second.translation[1]),
+            (first_ratio * first.translation[2]) + (second_ratio * second.translation[2]),
+        ];
+        let first_quat = UnitQuaternion::from_quaternion(Quaternion::new(
+            first.rotation[0],
+            first.rotation[1],
+            first.rotation[2],
+            first.rotation[3],
+        ));
+        let second_quat = UnitQuaternion::from_quaternion(Quaternion::new(
+            second.rotation[0],
+            second.rotation[1],
+            second.rotation[2],
+            second.rotation[3],
+        ));
+
+        let rotation = first_quat.slerp(&second_quat, first_ratio);
+
+
+        TransformStorage {
+            rotation: [
+                rotation[0],
+                rotation[1],
+                rotation[2],
+                rotation[3]
+            ],
+            translation,
+            stamp: time,
+            frame_id: first.frame_id,
+            child_frame_id: second.frame_id,
         }
     }
 }
