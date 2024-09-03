@@ -7,9 +7,9 @@ pub enum TF2Error {
     #[error("Empty container")]
     Empty,
     #[error("Lookup would require extrapolation at time `{0}`, but only time `{1}` is in the buffer")]
-    SingleExtrapolationError(f64, f64),
+    SingleExtrapolationError(u64, u64),
     #[error("Lookup would require extrapolation into the future. Requested time `{0}` but the latest data is at time `{1}`")]
-    FutureExtrapolationError(f64, f64),
+    FutureExtrapolationError(u64, u64),
     #[error("Lookup would require extrapolation into the past. Requested time `{0}` but the earliest data is at time `{1}`")]
-    PastExtrapolationError(f64, f64),
+    PastExtrapolationError(u64, u64),
 }

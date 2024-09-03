@@ -1,13 +1,12 @@
-use chrono::{DateTime, Duration, Utc};
 use derive_builder::Builder;
 
-use crate::{error::TF2Error, time::time_to_sec, transform_storage::TransformStorage, types::CompactFrameID};
+use crate::{error::TF2Error, transform_storage::TransformStorage, types::CompactFrameID};
 
 
 pub trait TimeCacheInterface {
     fn get_data(
         &self,
-        time: &DateTime<Utc>,
+        time: u64,
     ) -> Result<Option<TransformStorage>, TF2Error>;
 
     fn insert_data(
@@ -19,12 +18,12 @@ pub trait TimeCacheInterface {
 
     fn get_parent(
         &self,
-        time: &DateTime<Utc>,
+        time: u64,
     ) -> Result<Option<CompactFrameID>, TF2Error>;
 
-    fn get_latest_timestamp(&self) -> Option<DateTime<Utc>>;
+    fn get_latest_timestamp(&self) -> Option<u64>;
 
-    fn get_oldest_timestamp(&self) -> Option<DateTime<Utc>>;
+    fn get_oldest_timestamp(&self) -> Option<u64>;
 
 }
 
@@ -32,22 +31,22 @@ pub trait TimeCacheInterface {
 pub struct TimeCache {
     #[builder(default = "vec![]")]
     storage: Vec<TransformStorage>,
-    #[builder(default = "Duration::seconds(10)")]
-    max_storage_time: Duration,
+    #[builder(default = "10_000_000_000")]
+    max_storage_time_ns: u64,
 }
 
 impl TimeCacheInterface for TimeCache {
-    fn get_latest_timestamp(&self) -> Option<DateTime<Utc>> {
+    fn get_latest_timestamp(&self) -> Option<u64> {
         self.storage.first().map(|tfs| tfs.stamp)
     }
 
-    fn get_oldest_timestamp(&self) -> Option<DateTime<Utc>> {
+    fn get_oldest_timestamp(&self) -> Option<u64> {
         self.storage.last().map(|tfs| tfs.stamp)
     }
 
     fn get_data(
         &self,
-        time: &DateTime<Utc>,
+        time: u64,
     ) -> Result<Option<TransformStorage>, TF2Error> {
 
         let closest_result = self.find_closest(time)?;
@@ -59,7 +58,7 @@ impl TimeCacheInterface for TimeCache {
                 let first = closest_result[0];
                 let second = closest_result[1];
                 if first.frame_id == second.frame_id {
-                    Ok(Some(self.interpolate(first, second, time)))
+                    Ok(Some(TransformStorage::interpolate(first, second, time)))
                 } else {
                     Ok(Some(*first))
                 }
@@ -70,7 +69,7 @@ impl TimeCacheInterface for TimeCache {
 
     fn get_parent(
         &self,
-        time: &DateTime<Utc>,
+        time: u64,
     ) -> Result<Option<CompactFrameID>, TF2Error> {
         let closest_frames = self.find_closest(time)?;
         Ok(closest_frames.first().map(|v| v.frame_id))
@@ -94,55 +93,36 @@ impl TimeCacheInterface for TimeCache {
         // (1) Prune all old data first, regardless if new_data is added,
         self.prune_list();
 
-        // (2) We use binary search to scan from newest to oldest, and stop at the first
+        // (2) We use sequential search to scan from newest to oldest, and stop at the first
         //     point where the timestamp is equal or older to new_data's.
-        let insertion_pos = match self.storage.binary_search_by_key(
-            &(-new_data.stamp.timestamp(), -(new_data.stamp.timestamp_subsec_nanos() as i64)),
-            |v| (-v.stamp.timestamp(), -(v.stamp.timestamp_subsec_nanos() as i64))
-        ) {
-            Ok(idx) => {
-                // (3) From this point, we scan with more expensive full equality checks to
-                //     ensure we do not reinsert the same exact data.
+        //     This is preferred over binary search since most of the timestamps will be inserted close to beginning.
+        //     TODO: Dynamically decide which one to do based on some heuristic (new_data timestamp compared to latest and oldest?)
+        let mut idx = 0;
+        while idx < self.storage.len() && self.storage[idx].stamp > new_data.stamp {
+            idx += 1
+        }
 
-                let mut got_match = false;
-                // Traverse from idx forward and backward to see if there is a match
-                let mut back_idx = idx;
-                // Backwards
-                while !got_match && self.storage[back_idx].stamp == new_data.stamp {
-                    if &self.storage[back_idx] == new_data {
-                        got_match = true;
-                    }
-                    if back_idx == 0 {
-                        break;
-                    }
-                    back_idx -= 1;
-                }
+        // (3) From this point, we scan with more expensive full equality checks to
+        //     ensure we do not reinsert the same exact data.
+        let mut got_match = false;
+        // Traverse from idx forward to see if there is a match
+        while !got_match && idx < self.storage.len() && self.storage[idx].stamp == new_data.stamp {
+            if &self.storage[idx] == new_data {
+                got_match = true;
+                break;
+            }
+            idx += 1;
+        }
 
-                let mut forward_idx = idx + 1;
-                while !got_match && forward_idx < self.storage.len() && self.storage[forward_idx].stamp == new_data.stamp {
-                    if &self.storage[forward_idx] == new_data {
-                        got_match = true;
-                    }
-                    forward_idx -= 1;
-                }
-
-                if got_match {
-                    None
-                } else {
-                    Some(idx)
-                }
-            },
-            Err(idx) => Some(idx),
-        };
+        // Got a match. Do not insert
+        if got_match {
+            return false;
+        }
 
         // (4) If we the data is not duplicated, then we simply insert new_data at
         //     the point found in (2).
-        if let Some(idx) = insertion_pos {
-            self.storage.insert(idx, *new_data);
-            true
-        } else {
-            false
-        }
+        self.storage.insert(idx, *new_data);
+        true
     }
 
     fn clear_list(&mut self) {
@@ -153,11 +133,11 @@ impl TimeCacheInterface for TimeCache {
 impl TimeCache {
     pub fn new(
         storage: Vec<TransformStorage>,
-        max_storage_time: Duration,
+        max_storage_time_ns: u64,
     ) -> Self {
         TimeCache {
             storage,
-            max_storage_time
+            max_storage_time_ns
         }
     }
 
@@ -172,7 +152,7 @@ impl TimeCache {
 
     fn find_closest(
         &self,
-        target_time: &DateTime<Utc>,
+        target_time: u64,
     ) -> Result<Vec<&TransformStorage>, TF2Error> {
         // If storage is 0 then return empty
         if self.storage.is_empty() {
@@ -180,7 +160,7 @@ impl TimeCache {
         }
 
         // If t = 0, then return latest transform
-        if target_time == &DateTime::UNIX_EPOCH {
+        if target_time == 0 {
             return Ok(
                 vec![
                     self.storage.first().unwrap()
@@ -191,15 +171,15 @@ impl TimeCache {
         // If length of store is 1, return only if timestamps match exactly
         if self.storage.len() == 1 {
             let cur_ts_storage = self.storage.first().unwrap();
-            if target_time == &cur_ts_storage.stamp {
+            if target_time == cur_ts_storage.stamp {
                 return Ok(vec![
                     cur_ts_storage
                 ])
             } else {
                 return Err(
                     TF2Error::SingleExtrapolationError(
-                        time_to_sec(target_time),
-                        time_to_sec(&cur_ts_storage.stamp)
+                        target_time,
+                        cur_ts_storage.stamp
                     )
                 )
             }
@@ -208,81 +188,47 @@ impl TimeCache {
         // Check interpolated doesn't violated bounds
         let earliest_time = self.storage.last().unwrap().stamp;
         let latest_time = self.storage.first().unwrap().stamp;
-        if target_time == &latest_time {
+        if target_time == latest_time {
             return Ok(vec![self.storage.first().unwrap()])
-        } else if target_time == &earliest_time {
+        } else if target_time == earliest_time {
             return Ok(vec![self.storage.last().unwrap()])
-        } else if target_time < &earliest_time {
+        } else if target_time < earliest_time {
             return Err(TF2Error::PastExtrapolationError(
-                time_to_sec(target_time),
-                time_to_sec(&earliest_time)
+                target_time,
+                earliest_time
             ))
-        } else if target_time > &latest_time {
+        } else if target_time > latest_time {
             return Err(TF2Error::FutureExtrapolationError(
-                time_to_sec(target_time),
-                time_to_sec(&latest_time)
+                target_time,
+                latest_time
             ))
         }
 
         // At this point, we are:
         // 1. guaranteed to have two values stored in storage.
         // 2. target time is somewhere within bounds of the
-
-        // Binary search for the index of the match.
-        // Do negative numbers since sorting is reversed
-        match self.storage.binary_search_by_key(
-            &(-target_time.timestamp(), -(target_time.timestamp_subsec_nanos() as i64)),
-            |v| (-v.stamp.timestamp(), -(v.stamp.timestamp_subsec_nanos() as i64))
-        ) {
-            Ok(idx) => {
-                Ok(vec![self.storage.get(idx).unwrap()])
-            },
-            Err(idx) => {
-                Ok(
-                    vec![
-                        self.storage.get(idx).unwrap(),
-                        self.storage.get(idx - 1).unwrap(),
-                    ]
-                )
-            },
-        }
-    }
-
-    fn interpolate(
-        &self,
-        first: &TransformStorage,
-        second: &TransformStorage,
-        time: &DateTime<Utc>,
-    ) -> TransformStorage {
-        if first.stamp == second.stamp {
-            return *first;
+        let mut idx = 0;
+        while idx < self.storage.len() && self.storage[idx].stamp > target_time {
+            idx += 1
         }
 
-        let first_stamp = time_to_sec(&first.stamp);
-        let second_stamp = time_to_sec(&second.stamp);
-        let time_stamp = time_to_sec(time);
-
-        let second_ratio = (time_stamp - first_stamp) / (second_stamp - first_stamp);
-        let first_ratio = 1. - second_ratio;
-
-        let translation = (first_ratio * first.translation) + (second_ratio * second.translation);
-        let rotation = first.rotation.slerp(&second.rotation, second_ratio);
-
-
-        TransformStorage {
-            rotation,
-            translation,
-            stamp: *time,
-            frame_id: first.frame_id,
-            child_frame_id: second.frame_id,
+        if self.storage[idx].stamp == target_time {
+            Ok(vec![self.storage.get(idx).unwrap()])
+        } else {
+            Ok(
+                vec![
+                    self.storage.get(idx).unwrap(),
+                    self.storage.get(idx - 1).unwrap(),
+                ]
+            )
         }
     }
 
     fn prune_list(&mut self) {
         let cut_ts = match self.get_latest_timestamp() {
             Some(dt) => {
-                let acceptable_storage_time = dt - self.max_storage_time;
-                acceptable_storage_time.timestamp_nanos_opt().map(|x| -x)
+                let acceptable_storage_time = dt as i64 - self.max_storage_time_ns as i64;
+                i64::max(0, acceptable_storage_time) as u64
             },
             None => {
                 // Nothing to remove, the store is empty
@@ -290,21 +236,12 @@ impl TimeCache {
             }
         };
 
-        let idx = match self.storage.binary_search_by_key(
-            &cut_ts,
-            |v| v.stamp.timestamp_nanos_opt().map(|x| -x)
-        ) {
-            Ok(idx) => {
-                let mut start_idx = idx + 1;
-                while start_idx < self.storage.len() && self.storage[start_idx].stamp.timestamp_nanos_opt().map(|x| -x) <= cut_ts {
-                    start_idx += 1;
-                }
-                start_idx
-            },
-            Err(idx) => idx,
-        };
+        let mut idx = 0;
+        while idx < self.storage.len() && self.storage[idx].stamp >= cut_ts {
+            idx += 1
+        }
 
-        if idx > 0 && idx < self.storage.len() {
+        if idx < self.storage.len() {
             self.storage.truncate(idx)
         }
     }
@@ -315,17 +252,17 @@ impl TimeCache {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{TimeDelta, Timelike};
+    use chrono::TimeDelta;
     use nalgebra::{Quaternion, UnitQuaternion, Vector3};
-    use rand::{self, Rng};
+    use rand::{self, Rng, SeedableRng as _};
 
     use super::*;
 
     fn make_item(nanosec: i64, frame_id: u32) -> TransformStorage {
         TransformStorage::new(
-            UnitQuaternion::identity(),
-            Vector3::zeros(),
-            chrono::DateTime::UNIX_EPOCH + TimeDelta::nanoseconds(nanosec),
+            [0., 0., 0., 1.],
+            [0., 0., 0.],
+            nanosec as u64,
             frame_id,
             0,
         )
@@ -391,8 +328,8 @@ mod tests {
 
     #[test]
     fn test_time_cache_get_all_items() {
-        let max_storage_time = TimeDelta::nanoseconds(10);
-        let mut cache = TimeCache::new(Vec::new(), max_storage_time) ;
+        let max_storage_time_ns = 10;
+        let mut cache = TimeCache::new(Vec::new(), max_storage_time_ns) ;
 
         let item_a = make_item(0, 0);
         let item_b = make_item(10, 1);
@@ -416,7 +353,7 @@ mod tests {
         // to the max storage duration.
         assert_eq!(
           cache.get_latest_timestamp().unwrap() - cache.get_oldest_timestamp().unwrap(),
-          max_storage_time
+          max_storage_time_ns
         );
 
         // Expect that storage is descending.
@@ -495,10 +432,9 @@ mod tests {
         }
         assert_eq!(cache.get_list_length(), (runs - 1) as usize);
         for i in 1..runs {
-          let cur_stamp = DateTime::UNIX_EPOCH + Duration::nanoseconds(i);
-          let stor = cache.get_data(&cur_stamp).unwrap().unwrap();
+          let stor = cache.get_data(i as u64).unwrap().unwrap();
           assert_eq!(stor.frame_id, i as u32);
-          assert_eq!(stor.stamp, cur_stamp);
+          assert_eq!(stor.stamp, i as u64);
         }
     }
 
@@ -515,10 +451,9 @@ mod tests {
         }
         assert_eq!(cache.get_list_length(), runs as usize);
         for i in 1..runs {
-          let cur_stamp = DateTime::UNIX_EPOCH + Duration::nanoseconds(i);
-          let stor = cache.get_data(&cur_stamp).unwrap().unwrap();
+          let stor = cache.get_data(i as u64).unwrap().unwrap();
           assert_eq!(stor.frame_id, i as u32);
-          assert_eq!(stor.stamp, cur_stamp);
+          assert_eq!(stor.stamp, i as u64);
         }
     }
 
@@ -555,30 +490,29 @@ mod tests {
         cache.insert_data(&make_item(runs, runs as u32));
 
         for i in 1..runs {
-            let cur_stamp = DateTime::UNIX_EPOCH + Duration::nanoseconds(i);
-            let stor = cache.get_data(&cur_stamp).unwrap().unwrap();
+            let stor = cache.get_data(i as u64).unwrap().unwrap();
 
-            assert_eq!(stor.frame_id, i as u32);
-            assert_eq!(stor.stamp.nanosecond(), i as u32);
+            assert_eq!(stor.frame_id, i as CompactFrameID);
+            assert_eq!(stor.stamp, i as u64);
         }
 
-        let mut stor = cache.get_data(&DateTime::UNIX_EPOCH).unwrap().unwrap();
+        let mut stor = cache.get_data(0).unwrap().unwrap();
         assert_eq!(stor.frame_id, runs as u32);
-        assert_eq!(stor.stamp.nanosecond(), runs as u32);
+        assert_eq!(stor.stamp, runs as u64);
 
         stor.frame_id = runs as u32;
-        stor.stamp += Duration::nanoseconds(1);
+        stor.stamp += 1;
         cache.insert_data(&stor);
 
         // Make sure we get a different value now that a new values is added at the front
-        let stor = cache.get_data(&DateTime::UNIX_EPOCH).unwrap().unwrap();
-        assert_eq!(stor.frame_id, runs as u32);
-        assert_eq!(stor.stamp.nanosecond(), (runs + 1) as u32);
+        let stor = cache.get_data(0).unwrap().unwrap();
+        assert_eq!(stor.frame_id, runs as CompactFrameID);
+        assert_eq!(stor.stamp, (runs + 1) as u64);
     }
 
     #[test]
     fn test_time_cache_cartesian_interpolation() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(32);
 
         let runs = 100;
         let epsilon = 2e-6;
@@ -592,7 +526,7 @@ mod tests {
 
         let offset = 200;
 
-        for i in 1..runs  {
+        for _i in 1..runs  {
           for step in 0..2usize {
 
             x_values[step] = 10.0 * rng.gen::<f64>();
@@ -600,15 +534,15 @@ mod tests {
             z_values[step] = 10.0 * rng.gen::<f64>();
 
             let mut stor = make_item(step as i64 * 100 + offset, 2);
-            stor.translation = Vector3::new(x_values[step], y_values[step], z_values[step]);
+            stor.translation = [x_values[step], y_values[step], z_values[step]];
             cache.insert_data(&stor);
           }
 
           for pos in 0..100 {
-            let stor = cache.get_data(&(DateTime::UNIX_EPOCH + Duration::nanoseconds(offset + pos))).unwrap().unwrap();
-            let x_out = stor.translation.x;
-            let y_out = stor.translation.y;
-            let z_out = stor.translation.z;
+            let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
+            let x_out = stor.translation[0];
+            let y_out = stor.translation[1];
+            let z_out = stor.translation[2];
 
             approx::assert_relative_eq!(x_values[0] + (x_values[1] - x_values[0]) * (pos as f64) / 100.0, x_out, epsilon = epsilon);
             approx::assert_relative_eq!(y_values[0] + (y_values[1] - y_values[0]) * (pos as f64) / 100.0, y_out, epsilon = epsilon);
@@ -621,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_time_cache_reparenting_interpolation_protection() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(32);
 
         let runs = 100;
         let epsilon = 1e-6;
@@ -646,15 +580,15 @@ mod tests {
                 step as i64 * 100 + offset,
                 step as u32 + 4
             );
-            stor.translation = Vector3::new(x_values[step], y_values[step], z_values[step]);
+            stor.translation = [x_values[step], y_values[step], z_values[step]];
             cache.insert_data(&stor);
           }
 
           for pos in 0..100 {
-            let stor = cache.get_data(&(DateTime::UNIX_EPOCH + Duration::nanoseconds(offset + pos))).unwrap().unwrap();
-            let x_out = stor.translation.x;
-            let y_out = stor.translation.y;
-            let z_out = stor.translation.z;
+            let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
+            let x_out = stor.translation[0];
+            let y_out = stor.translation[1];
+            let z_out = stor.translation[2];
 
             approx::assert_relative_eq!(x_values[0], x_out, epsilon = epsilon);
             approx::assert_relative_eq!(y_values[0], y_out, epsilon = epsilon);
@@ -667,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_time_cache_angular_interpolation() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(32);
 
         let runs = 100;
         let epsilon = 1e-6;
@@ -681,7 +615,7 @@ mod tests {
 
         let offset = 200;
 
-        for i in 1..runs  {
+        for _i in 1..runs  {
             let mut quats = vec![];
             for step in 0..2usize {
 
@@ -691,16 +625,29 @@ mod tests {
 
               let mut stor = make_item(step as i64 * 100 + offset, 2);
               quats.push(UnitQuaternion::from_euler_angles(yaw_values[step], pitch_values[step], roll_values[step]));
-              stor.rotation = quats.last().unwrap().clone();
+              let last_quat = quats.last().unwrap();
+              stor.rotation = [
+                last_quat.i,
+                last_quat.j,
+                last_quat.k,
+                last_quat.w,
+              ];
               cache.insert_data(&stor);
             }
 
             for pos in 0..100 {
-              let stor = cache.get_data(&(DateTime::UNIX_EPOCH + Duration::nanoseconds(offset + pos))).unwrap().unwrap();
+              let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
 
               let ground_truth = quats[0].slerp(&quats[1], pos as f64 / 100.0);
 
-              approx::assert_relative_eq!(0.0, ground_truth.angle_to(&stor.rotation), epsilon = epsilon);
+              let stor_rotation = UnitQuaternion::from_quaternion(Quaternion::new(
+                stor.rotation[3],
+                stor.rotation[0],
+                stor.rotation[1],
+                stor.rotation[2],
+              ));
+
+              approx::assert_relative_eq!(0.0, ground_truth.angle_to(&stor_rotation), epsilon = epsilon);
             }
             cache.clear_list();
         }
@@ -719,7 +666,7 @@ mod tests {
         // Exact repeated element, should not grow in length.
         assert_eq!(cache.get_list_length(), 1);
 
-        let stor_out = cache.get_data(&(DateTime::UNIX_EPOCH + Duration::nanoseconds(1)));
+        let stor_out = cache.get_data(1);
 
         assert!(stor_out.is_ok());
         assert!(stor_out.unwrap().is_some());
