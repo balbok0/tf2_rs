@@ -1,11 +1,51 @@
 use chrono::{DateTime, Utc};
 
-use crate::{transform_storage::TransformStorage, types::CompactFrameID};
+use crate::{cache::TimeCacheInterface, transform_storage::TransformStorage, types::CompactFrameID};
 
 
 #[derive(Debug, Clone, Copy)]
 pub struct StaticCache {
     storage: TransformStorage,
+}
+
+impl TimeCacheInterface for StaticCache {
+    fn get_data(
+        &self,
+        time: u64,
+    ) -> Result<Option<TransformStorage>, crate::error::TF2Error> {
+        let mut data_out = self.storage;
+        data_out.stamp = time;
+        Ok(Some(data_out))
+    }
+
+    fn insert_data(
+        &mut self,
+        new_data: &TransformStorage,
+    ) -> bool {
+        self.storage = *new_data;
+        true
+    }
+
+    fn clear_list(&mut self) {}
+
+    fn get_parent(
+        &self,
+        _time: u64,
+    ) -> Result<Option<CompactFrameID>, crate::error::TF2Error> {
+        Ok(Some(self.storage.frame_id))
+    }
+
+    fn get_latest_timestamp(&self) -> Option<u64> {
+        None
+    }
+
+    fn get_latest_timestamp_and_parent(&self) -> Option<(u64, CompactFrameID)> {
+        Some((0, self.storage.frame_id))
+    }
+
+    fn get_oldest_timestamp(&self) -> Option<u64> {
+        None
+    }
 }
 
 impl StaticCache {
@@ -17,37 +57,13 @@ impl StaticCache {
         }
     }
 
-    pub fn get_data(&self, time: u64) -> TransformStorage {
-        let mut data_out = self.storage;
-        data_out.stamp = time;
-        data_out
-    }
-
-    pub fn insert_data(&mut self, new_data: TransformStorage) -> bool {
-        self.storage = new_data;
-        true
-    }
-
-    pub fn clear_list(&mut self) {}
 
     pub fn get_list_length(&self) -> usize {
         1
     }
 
-    pub fn get_parent(&self, _time: &DateTime<Utc>) -> CompactFrameID {
-        self.storage.frame_id
-    }
-
-    pub fn get_latest_time_and_parent(&self) -> (Option<DateTime<Utc>>, CompactFrameID) {
+    pub fn get_latest_time_and_parent(&self) -> (Option<u64>, CompactFrameID) {
         (self.get_latest_timestamp(), self.storage.frame_id)
-    }
-
-    pub fn get_latest_timestamp(&self) -> Option<DateTime<Utc>> {
-        None
-    }
-
-    pub fn get_oldest_timestamp(&self) -> Option<DateTime<Utc>> {
-        None
     }
 }
 
@@ -73,9 +89,9 @@ mod tests {
         let mut cache = StaticCache::new(dummy_transform_store);
 
         for i in 1..runs {
-            cache.insert_data(make_item(i, i as u32));
+            cache.insert_data(&make_item(i, i as u32));
 
-            let stor = cache.get_data(i as u64);
+            let stor = cache.get_data(i as u64).unwrap().unwrap();
             assert_eq!(stor.frame_id, i as u32);
             assert_eq!(stor.stamp, i as u64);
         }
@@ -86,9 +102,9 @@ mod tests {
         let stor = make_item(1, 3);
         let mut cache = StaticCache::new(stor);
 
-        cache.insert_data(stor);
+        cache.insert_data(&stor);
 
-        let stor_out = cache.get_data(1);
+        let stor_out = cache.get_data(1).unwrap().unwrap();
 
         assert_eq!(stor_out.frame_id, stor.frame_id);
         assert_eq!(stor_out.stamp, stor.stamp);

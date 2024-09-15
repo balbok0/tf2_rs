@@ -2,18 +2,31 @@ use derive_builder::Builder;
 
 use crate::{error::TF2Error, transform_storage::TransformStorage, types::CompactFrameID};
 
-pub trait TimeCacheInterface {
-    fn get_data(&self, time: u64) -> Result<Option<TransformStorage>, TF2Error>;
 
-    fn insert_data(&mut self, new_data: &TransformStorage) -> bool;
+pub trait TimeCacheInterface {
+    fn get_data(
+        &self,
+        time: u64,
+    ) -> Result<Option<TransformStorage>, TF2Error>;
+
+    fn insert_data(
+        &mut self,
+        new_data: &TransformStorage,
+    ) -> bool;
 
     fn clear_list(&mut self);
 
-    fn get_parent(&self, time: u64) -> Result<Option<CompactFrameID>, TF2Error>;
+    fn get_parent(
+        &self,
+        time: u64,
+    ) -> Result<Option<CompactFrameID>, TF2Error>;
 
     fn get_latest_timestamp(&self) -> Option<u64>;
 
+    fn get_latest_timestamp_and_parent(&self) -> Option<(u64, CompactFrameID)>;
+
     fn get_oldest_timestamp(&self) -> Option<u64>;
+
 }
 
 #[derive(Debug, Clone, Builder, PartialEq)]
@@ -29,11 +42,20 @@ impl TimeCacheInterface for TimeCache {
         self.storage.first().map(|tfs| tfs.stamp)
     }
 
+    fn get_latest_timestamp_and_parent(&self) -> Option<(u64, CompactFrameID)> {
+        let latest = self.storage.first()?;
+        Some((latest.stamp, latest.frame_id))
+    }
+
     fn get_oldest_timestamp(&self) -> Option<u64> {
         self.storage.last().map(|tfs| tfs.stamp)
     }
 
-    fn get_data(&self, time: u64) -> Result<Option<TransformStorage>, TF2Error> {
+    fn get_data(
+        &self,
+        time: u64,
+    ) -> Result<Option<TransformStorage>, TF2Error> {
+
         let closest_result = self.find_closest(time)?;
 
         match closest_result.len() {
@@ -48,16 +70,22 @@ impl TimeCacheInterface for TimeCache {
                     Ok(Some(*first))
                 }
             }
-            _ => panic!("Never should happen!"),
+            _ => panic!("Never should happen!")
         }
     }
 
-    fn get_parent(&self, time: u64) -> Result<Option<CompactFrameID>, TF2Error> {
+    fn get_parent(
+        &self,
+        time: u64,
+    ) -> Result<Option<CompactFrameID>, TF2Error> {
         let closest_frames = self.find_closest(time)?;
         Ok(closest_frames.first().map(|v| v.frame_id))
     }
 
-    fn insert_data(&mut self, new_data: &TransformStorage) -> bool {
+    fn insert_data(
+        &mut self,
+        new_data: &TransformStorage,
+    ) -> bool {
         // TODO: Finish me
         // From original TF2: https://github.com/ros2/geometry2/blob/ros2/tf2/src/cache.cpp#L251-L258
         // In order to minimize the number of times we iterate over this data, we:
@@ -110,10 +138,13 @@ impl TimeCacheInterface for TimeCache {
 }
 
 impl TimeCache {
-    pub fn new(storage: Vec<TransformStorage>, max_storage_time_ns: u64) -> Self {
+    pub fn new(
+        storage: Vec<TransformStorage>,
+        max_storage_time_ns: u64,
+    ) -> Self {
         TimeCache {
             storage,
-            max_storage_time_ns,
+            max_storage_time_ns
         }
     }
 
@@ -125,27 +156,39 @@ impl TimeCache {
         self.storage.len()
     }
 
-    fn find_closest(&self, target_time: u64) -> Result<Vec<&TransformStorage>, TF2Error> {
+
+    fn find_closest(
+        &self,
+        target_time: u64,
+    ) -> Result<Vec<&TransformStorage>, TF2Error> {
         // If storage is 0 then return empty
         if self.storage.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Vec::new())
         }
 
         // If t = 0, then return latest transform
         if target_time == 0 {
-            return Ok(vec![self.storage.first().unwrap()]);
+            return Ok(
+                vec![
+                    self.storage.first().unwrap()
+                ]
+            );
         }
 
         // If length of store is 1, return only if timestamps match exactly
         if self.storage.len() == 1 {
             let cur_ts_storage = self.storage.first().unwrap();
             if target_time == cur_ts_storage.stamp {
-                return Ok(vec![cur_ts_storage]);
+                return Ok(vec![
+                    cur_ts_storage
+                ])
             } else {
-                return Err(TF2Error::SingleExtrapolationError(
-                    target_time,
-                    cur_ts_storage.stamp,
-                ));
+                return Err(
+                    TF2Error::SingleExtrapolationError(
+                        target_time,
+                        cur_ts_storage.stamp
+                    )
+                )
             }
         }
 
@@ -153,13 +196,19 @@ impl TimeCache {
         let earliest_time = self.storage.last().unwrap().stamp;
         let latest_time = self.storage.first().unwrap().stamp;
         if target_time == latest_time {
-            return Ok(vec![self.storage.first().unwrap()]);
+            return Ok(vec![self.storage.first().unwrap()])
         } else if target_time == earliest_time {
-            return Ok(vec![self.storage.last().unwrap()]);
+            return Ok(vec![self.storage.last().unwrap()])
         } else if target_time < earliest_time {
-            return Err(TF2Error::PastExtrapolationError(target_time, earliest_time));
+            return Err(TF2Error::PastExtrapolationError(
+                target_time,
+                earliest_time
+            ))
         } else if target_time > latest_time {
-            return Err(TF2Error::FutureExtrapolationError(target_time, latest_time));
+            return Err(TF2Error::FutureExtrapolationError(
+                target_time,
+                latest_time
+            ))
         }
 
         // At this point, we are:
@@ -173,10 +222,12 @@ impl TimeCache {
         if self.storage[idx].stamp == target_time {
             Ok(vec![self.storage.get(idx).unwrap()])
         } else {
-            Ok(vec![
-                self.storage.get(idx).unwrap(),
-                self.storage.get(idx - 1).unwrap(),
-            ])
+            Ok(
+                vec![
+                    self.storage.get(idx).unwrap(),
+                    self.storage.get(idx - 1).unwrap(),
+                ]
+            )
         }
     }
 
@@ -185,10 +236,10 @@ impl TimeCache {
             Some(dt) => {
                 let acceptable_storage_time = dt as i64 - self.max_storage_time_ns as i64;
                 i64::max(0, acceptable_storage_time) as u64
-            }
+            },
             None => {
                 // Nothing to remove, the store is empty
-                return;
+                return
             }
         };
 
@@ -201,7 +252,10 @@ impl TimeCache {
             self.storage.truncate(idx)
         }
     }
+
+
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -212,17 +266,24 @@ mod tests {
     use super::*;
 
     fn make_item(nanosec: i64, frame_id: u32) -> TransformStorage {
-        TransformStorage::new([0., 0., 0., 1.], [0., 0., 0.], nanosec as u64, frame_id, 0)
+        TransformStorage::new(
+            [0., 0., 0., 1.],
+            [0., 0., 0.],
+            nanosec as u64,
+            frame_id,
+            0,
+        )
     }
 
-    fn compare_stores(one: &Vec<TransformStorage>, two: &Vec<TransformStorage>) {
+    fn compare_stores(
+        one: &Vec<TransformStorage>,
+        two: &Vec<TransformStorage>,
+    ) {
         // Ensure both are equal length
         assert_eq!(
             one.len(),
             two.len(),
-            "Stores have different lengths: {} and {} but should be the same",
-            one.len(),
-            two.len()
+            "Stores have different lengths: {} and {} but should be the same", one.len(), two.len()
         );
 
         // If both stores are 0-length we gucci
@@ -256,7 +317,7 @@ mod tests {
 
                 if !one_matches && !two_matches {
                     // Neither matches: End of sequence
-                    break;
+                    break
                 }
                 // Otherwise it is a match to current sequence, so iterate further
             }
@@ -268,12 +329,14 @@ mod tests {
 
             snapshot_start_idx = cur_idx;
         }
+
     }
+
 
     #[test]
     fn test_time_cache_get_all_items() {
         let max_storage_time_ns = 10;
-        let mut cache = TimeCache::new(Vec::new(), max_storage_time_ns);
+        let mut cache = TimeCache::new(Vec::new(), max_storage_time_ns) ;
 
         let item_a = make_item(0, 0);
         let item_b = make_item(10, 1);
@@ -296,8 +359,8 @@ mod tests {
         // Note that the difference between the oldest and newest timestamp is exactly equal
         // to the max storage duration.
         assert_eq!(
-            cache.get_latest_timestamp().unwrap() - cache.get_oldest_timestamp().unwrap(),
-            max_storage_time_ns
+          cache.get_latest_timestamp().unwrap() - cache.get_oldest_timestamp().unwrap(),
+          max_storage_time_ns
         );
 
         // Expect that storage is descending.
@@ -310,7 +373,7 @@ mod tests {
             // Remaining are in descending order.
             item_c.clone(),
             item_d.clone(),
-            item_a.clone(),
+            item_a.clone()
         ];
 
         let storage = cache.get_all_items().clone();
@@ -338,14 +401,22 @@ mod tests {
 
         // Insert newer data, and expect stale data to be pruned, even if newly inserted.
         let item_h = make_item(15, 7);
-        let item_i = make_item(0, 8); // This will be dropped.
+        let item_i = make_item(0, 8);  // This will be dropped.
         let item_j = make_item(5, 9);
 
         cache.insert_data(&item_h);
         cache.insert_data(&item_i);
         cache.insert_data(&item_j);
 
-        let storage_expected_new = vec![item_h, item_b, item_g, item_f, item_e, item_j, item_c];
+        let storage_expected_new = vec![
+          item_h,
+          item_b,
+          item_g,
+          item_f,
+          item_e,
+          item_j,
+          item_c,
+        ];
         // item_a, item_d, and item_i are pruned.
         let storage_new = cache.get_all_items().clone();
         compare_stores(
@@ -359,18 +430,18 @@ mod tests {
     fn test_time_cache_repeatability() {
         let runs = 100;
         let mut cache = TimeCacheBuilder::create_empty()
-            .storage(vec![])
-            .build()
-            .unwrap();
+          .storage(vec![])
+          .build()
+          .unwrap();
         for i in 1..runs {
-            let store = make_item(i, i as u32);
-            cache.insert_data(&store);
+          let store = make_item(i, i as u32);
+          cache.insert_data(&store);
         }
         assert_eq!(cache.get_list_length(), (runs - 1) as usize);
         for i in 1..runs {
-            let stor = cache.get_data(i as u64).unwrap().unwrap();
-            assert_eq!(stor.frame_id, i as u32);
-            assert_eq!(stor.stamp, i as u64);
+          let stor = cache.get_data(i as u64).unwrap().unwrap();
+          assert_eq!(stor.frame_id, i as u32);
+          assert_eq!(stor.stamp, i as u64);
         }
     }
 
@@ -378,18 +449,18 @@ mod tests {
     fn test_time_cache_repeatability_reverse_insert_order() {
         let runs = 100;
         let mut cache = TimeCacheBuilder::create_empty()
-            .storage(vec![])
-            .build()
-            .unwrap();
+          .storage(vec![])
+          .build()
+          .unwrap();
         for i in (0..runs).rev() {
-            let store = make_item(i, i as u32);
-            cache.insert_data(&store);
+          let store = make_item(i, i as u32);
+          cache.insert_data(&store);
         }
         assert_eq!(cache.get_list_length(), runs as usize);
         for i in 1..runs {
-            let stor = cache.get_data(i as u64).unwrap().unwrap();
-            assert_eq!(stor.frame_id, i as u32);
-            assert_eq!(stor.stamp, i as u64);
+          let stor = cache.get_data(i as u64).unwrap().unwrap();
+          assert_eq!(stor.frame_id, i as u32);
+          assert_eq!(stor.stamp, i as u64);
         }
     }
 
@@ -397,15 +468,16 @@ mod tests {
     fn test_time_cache_repeated_elements() {
         let runs = 100;
         let mut cache = TimeCacheBuilder::create_empty()
-            .storage(vec![])
-            .build()
-            .unwrap();
+          .storage(vec![])
+          .build()
+          .unwrap();
 
         let store = make_item(0, 0);
         for _ in (0..runs).rev() {
-            cache.insert_data(&store);
+          cache.insert_data(&store);
         }
         assert_eq!(cache.get_list_length(), 1);
+
     }
 
     #[test]
@@ -416,6 +488,7 @@ mod tests {
             .storage(vec![])
             .build()
             .unwrap();
+
 
         for i in 1..100 {
             cache.insert_data(&make_item(i, i as u32));
@@ -451,49 +524,41 @@ mod tests {
         let runs = 100;
         let epsilon = 2e-6;
 
-        let mut cache = TimeCacheBuilder::create_empty().build().unwrap();
+        let mut cache = TimeCacheBuilder::create_empty()
+            .build()
+            .unwrap();
         let mut x_values = vec![0., 0.];
         let mut y_values = vec![0., 0.];
         let mut z_values = vec![0., 0.];
 
         let offset = 200;
 
-        for _i in 1..runs {
-            for step in 0..2usize {
-                x_values[step] = 10.0 * rng.gen::<f64>();
-                y_values[step] = 10.0 * rng.gen::<f64>();
-                z_values[step] = 10.0 * rng.gen::<f64>();
+        for _i in 1..runs  {
+          for step in 0..2usize {
 
-                let mut stor = make_item(step as i64 * 100 + offset, 2);
-                stor.translation = [x_values[step], y_values[step], z_values[step]];
-                cache.insert_data(&stor);
-            }
+            x_values[step] = 10.0 * rng.gen::<f64>();
+            y_values[step] = 10.0 * rng.gen::<f64>();
+            z_values[step] = 10.0 * rng.gen::<f64>();
 
-            for pos in 0..100 {
-                let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
-                let x_out = stor.translation[0];
-                let y_out = stor.translation[1];
-                let z_out = stor.translation[2];
+            let mut stor = make_item(step as i64 * 100 + offset, 2);
+            stor.translation = Vector3::new(x_values[step], y_values[step], z_values[step]);
+            cache.insert_data(&stor);
+          }
 
-                approx::assert_relative_eq!(
-                    x_values[0] + (x_values[1] - x_values[0]) * (pos as f64) / 100.0,
-                    x_out,
-                    epsilon = epsilon
-                );
-                approx::assert_relative_eq!(
-                    y_values[0] + (y_values[1] - y_values[0]) * (pos as f64) / 100.0,
-                    y_out,
-                    epsilon = epsilon
-                );
-                approx::assert_relative_eq!(
-                    z_values[0] + (z_values[1] - z_values[0]) * (pos as f64) / 100.0,
-                    z_out,
-                    epsilon = epsilon
-                );
-            }
-            cache.clear_list();
+          for pos in 0..100 {
+            let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
+            let x_out = stor.translation[0];
+            let y_out = stor.translation[1];
+            let z_out = stor.translation[2];
+
+            approx::assert_relative_eq!(x_values[0] + (x_values[1] - x_values[0]) * (pos as f64) / 100.0, x_out, epsilon = epsilon);
+            approx::assert_relative_eq!(y_values[0] + (y_values[1] - y_values[0]) * (pos as f64) / 100.0, y_out, epsilon = epsilon);
+            approx::assert_relative_eq!(z_values[0] + (z_values[1] - z_values[0]) * (pos as f64) / 100.0, z_out, epsilon = epsilon);
+          }
+          cache.clear_list();
         }
     }
+
 
     #[test]
     fn test_time_cache_reparenting_interpolation_protection() {
@@ -502,36 +567,42 @@ mod tests {
         let runs = 100;
         let epsilon = 1e-6;
 
-        let mut cache = TimeCacheBuilder::create_empty().build().unwrap();
+        let mut cache = TimeCacheBuilder::create_empty()
+            .build()
+            .unwrap();
         let mut x_values = vec![0., 0.];
         let mut y_values = vec![0., 0.];
         let mut z_values = vec![0., 0.];
 
         let offset = 555;
 
-        for i in 1..runs {
-            for step in 0..2usize {
-                x_values[step] = 10.0 * rng.gen::<f64>();
-                y_values[step] = 10.0 * rng.gen::<f64>();
-                z_values[step] = 10.0 * rng.gen::<f64>();
+        for i in 1..runs  {
+          for step in 0..2usize {
 
-                let mut stor = make_item(step as i64 * 100 + offset, step as u32 + 4);
-                stor.translation = [x_values[step], y_values[step], z_values[step]];
-                cache.insert_data(&stor);
-            }
+            x_values[step] = 10.0 * rng.gen::<f64>();
+            y_values[step] = 10.0 * rng.gen::<f64>();
+            z_values[step] = 10.0 * rng.gen::<f64>();
 
-            for pos in 0..100 {
-                let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
-                let x_out = stor.translation[0];
-                let y_out = stor.translation[1];
-                let z_out = stor.translation[2];
+            let mut stor = make_item(
+                step as i64 * 100 + offset,
+                step as u32 + 4
+            );
+            stor.translation = Vector3::new(x_values[step], y_values[step], z_values[step]);
+            cache.insert_data(&stor);
+          }
 
-                approx::assert_relative_eq!(x_values[0], x_out, epsilon = epsilon);
-                approx::assert_relative_eq!(y_values[0], y_out, epsilon = epsilon);
-                approx::assert_relative_eq!(z_values[0], z_out, epsilon = epsilon);
-            }
-            cache.clear_list();
-            assert!(cache.get_all_items().is_empty());
+          for pos in 0..100 {
+            let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
+            let x_out = stor.translation[0];
+            let y_out = stor.translation[1];
+            let z_out = stor.translation[2];
+
+            approx::assert_relative_eq!(x_values[0], x_out, epsilon = epsilon);
+            approx::assert_relative_eq!(y_values[0], y_out, epsilon = epsilon);
+            approx::assert_relative_eq!(z_values[0], z_out, epsilon = epsilon);
+          }
+          cache.clear_list();
+          assert!(cache.get_all_items().is_empty());
         }
     }
 
@@ -542,48 +613,43 @@ mod tests {
         let runs = 100;
         let epsilon = 1e-6;
 
-        let mut cache = TimeCacheBuilder::create_empty().build().unwrap();
+        let mut cache = TimeCacheBuilder::create_empty()
+            .build()
+            .unwrap();
         let mut yaw_values = vec![0., 0.];
         let mut pitch_values = vec![0., 0.];
         let mut roll_values = vec![0., 0.];
 
         let offset = 200;
 
-        for _i in 1..runs {
+        for _i in 1..runs  {
             let mut quats = vec![];
             for step in 0..2usize {
-                yaw_values[step] = 0.1 * rng.gen::<f64>();
-                pitch_values[step] = 0.1 * rng.gen::<f64>();
-                roll_values[step] = 0.1 * rng.gen::<f64>();
 
-                let mut stor = make_item(step as i64 * 100 + offset, 2);
-                quats.push(UnitQuaternion::from_euler_angles(
-                    yaw_values[step],
-                    pitch_values[step],
-                    roll_values[step],
-                ));
-                let last_quat = quats.last().unwrap();
-                stor.rotation = [last_quat.i, last_quat.j, last_quat.k, last_quat.w];
-                cache.insert_data(&stor);
+              yaw_values[step] = 0.1 * rng.gen::<f64>();
+              pitch_values[step] = 0.1 * rng.gen::<f64>();
+              roll_values[step] = 0.1 * rng.gen::<f64>();
+
+              let mut stor = make_item(step as i64 * 100 + offset, 2);
+              quats.push(UnitQuaternion::from_euler_angles(yaw_values[step], pitch_values[step], roll_values[step]));
+              let last_quat = quats.last().unwrap();
+              stor.rotation = last_quat.clone();
+              cache.insert_data(&stor);
             }
 
             for pos in 0..100 {
-                let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
+              let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
 
-                let ground_truth = quats[0].slerp(&quats[1], pos as f64 / 100.0);
+              let ground_truth = quats[0].slerp(&quats[1], pos as f64 / 100.0);
 
-                let stor_rotation = UnitQuaternion::from_quaternion(Quaternion::new(
-                    stor.rotation[3],
-                    stor.rotation[0],
-                    stor.rotation[1],
-                    stor.rotation[2],
-                ));
+              let stor_rotation = UnitQuaternion::from_quaternion(Quaternion::new(
+                stor.rotation[3],
+                stor.rotation[0],
+                stor.rotation[1],
+                stor.rotation[2],
+              ));
 
-                approx::assert_relative_eq!(
-                    0.0,
-                    ground_truth.angle_to(&stor_rotation),
-                    epsilon = epsilon
-                );
+              approx::assert_relative_eq!(0.0, ground_truth.angle_to(&stor_rotation), epsilon = epsilon);
             }
             cache.clear_list();
         }

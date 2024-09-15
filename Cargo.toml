@@ -7,6 +7,7 @@ edition = "2021"
 chrono = "0.4.38"
 derive_builder = "0.20.0"
 nalgebra = "0.33.0"
+parking_lot = "0.12.3"
 thiserror = "1.0.63"
 
 [dev-dependencies]
