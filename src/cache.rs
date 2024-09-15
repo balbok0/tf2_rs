@@ -7,7 +7,7 @@ pub trait TimeCacheInterface {
     fn get_data(
         &self,
         time: u64,
-    ) -> Result<Option<TransformStorage>, TF2Error>;
+    ) -> Result<TransformStorage, TF2Error>;
 
     fn insert_data(
         &mut self,
@@ -54,20 +54,20 @@ impl TimeCacheInterface for TimeCache {
     fn get_data(
         &self,
         time: u64,
-    ) -> Result<Option<TransformStorage>, TF2Error> {
+    ) -> Result<TransformStorage, TF2Error> {
 
         let closest_result = self.find_closest(time)?;
 
         match closest_result.len() {
-            0 => Ok(None),
-            1 => Ok(Some(*closest_result[0])),
+            0 => Err(TF2Error::Empty),
+            1 => Ok(*closest_result[0]),
             2 => {
                 let first = closest_result[0];
                 let second = closest_result[1];
                 if first.frame_id == second.frame_id {
-                    Ok(Some(TransformStorage::interpolate(first, second, time)))
+                    Ok(TransformStorage::interpolate(first, second, time))
                 } else {
-                    Ok(Some(*first))
+                    Ok(*first)
                 }
             }
             _ => panic!("Never should happen!")
@@ -439,7 +439,7 @@ mod tests {
         }
         assert_eq!(cache.get_list_length(), (runs - 1) as usize);
         for i in 1..runs {
-          let stor = cache.get_data(i as u64).unwrap().unwrap();
+          let stor = cache.get_data(i as u64).unwrap();
           assert_eq!(stor.frame_id, i as u32);
           assert_eq!(stor.stamp, i as u64);
         }
@@ -458,7 +458,7 @@ mod tests {
         }
         assert_eq!(cache.get_list_length(), runs as usize);
         for i in 1..runs {
-          let stor = cache.get_data(i as u64).unwrap().unwrap();
+          let stor = cache.get_data(i as u64).unwrap();
           assert_eq!(stor.frame_id, i as u32);
           assert_eq!(stor.stamp, i as u64);
         }
@@ -497,13 +497,13 @@ mod tests {
         cache.insert_data(&make_item(runs, runs as u32));
 
         for i in 1..runs {
-            let stor = cache.get_data(i as u64).unwrap().unwrap();
+            let stor = cache.get_data(i as u64).unwrap();
 
             assert_eq!(stor.frame_id, i as CompactFrameID);
             assert_eq!(stor.stamp, i as u64);
         }
 
-        let mut stor = cache.get_data(0).unwrap().unwrap();
+        let mut stor = cache.get_data(0).unwrap();
         assert_eq!(stor.frame_id, runs as u32);
         assert_eq!(stor.stamp, runs as u64);
 
@@ -512,7 +512,7 @@ mod tests {
         cache.insert_data(&stor);
 
         // Make sure we get a different value now that a new values is added at the front
-        let stor = cache.get_data(0).unwrap().unwrap();
+        let stor = cache.get_data(0).unwrap();
         assert_eq!(stor.frame_id, runs as CompactFrameID);
         assert_eq!(stor.stamp, (runs + 1) as u64);
     }
@@ -546,7 +546,7 @@ mod tests {
           }
 
           for pos in 0..100 {
-            let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
+            let stor = cache.get_data((offset + pos) as u64).unwrap();
             let x_out = stor.translation[0];
             let y_out = stor.translation[1];
             let z_out = stor.translation[2];
@@ -592,7 +592,7 @@ mod tests {
           }
 
           for pos in 0..100 {
-            let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
+            let stor = cache.get_data((offset + pos) as u64).unwrap();
             let x_out = stor.translation[0];
             let y_out = stor.translation[1];
             let z_out = stor.translation[2];
@@ -638,7 +638,7 @@ mod tests {
             }
 
             for pos in 0..100 {
-              let stor = cache.get_data((offset + pos) as u64).unwrap().unwrap();
+              let stor = cache.get_data((offset + pos) as u64).unwrap();
 
               let ground_truth = quats[0].slerp(&quats[1], pos as f64 / 100.0);
 
@@ -671,6 +671,5 @@ mod tests {
         let stor_out = cache.get_data(1);
 
         assert!(stor_out.is_ok());
-        assert!(stor_out.unwrap().is_some());
     }
 }

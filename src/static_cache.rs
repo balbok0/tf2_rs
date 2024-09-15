@@ -12,10 +12,10 @@ impl TimeCacheInterface for StaticCache {
     fn get_data(
         &self,
         time: u64,
-    ) -> Result<Option<TransformStorage>, crate::error::TF2Error> {
+    ) -> Result<TransformStorage, crate::error::TF2Error> {
         let mut data_out = self.storage;
         data_out.stamp = time;
-        Ok(Some(data_out))
+        Ok(data_out)
     }
 
     fn insert_data(
@@ -91,7 +91,7 @@ mod tests {
         for i in 1..runs {
             cache.insert_data(&make_item(i, i as u32));
 
-            let stor = cache.get_data(i as u64).unwrap().unwrap();
+            let stor = cache.get_data(i as u64).unwrap();
             assert_eq!(stor.frame_id, i as u32);
             assert_eq!(stor.stamp, i as u64);
         }
@@ -104,7 +104,7 @@ mod tests {
 
         cache.insert_data(&stor);
 
-        let stor_out = cache.get_data(1).unwrap().unwrap();
+        let stor_out = cache.get_data(1).unwrap();
 
         assert_eq!(stor_out.frame_id, stor.frame_id);
         assert_eq!(stor_out.stamp, stor.stamp);
