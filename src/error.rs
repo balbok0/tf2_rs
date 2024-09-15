@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::types::CompactFrameID;
+
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum TF2Error {
     #[error("unknown data store error")]
@@ -7,14 +9,15 @@ pub enum TF2Error {
     #[error("Empty container")]
     Empty,
 
+    // Frame id issues
     #[error("Ignoring transform w/ authority `{0}` with frame_id and child_frame_id `{1}` because they are the same.")]
     MatchingFrameIDs(String, String),
-
     #[error("Ignoring transform w/ authority `{0}` with empty `{1}`.")]
     EmptyFrameID(String, &'static str),
     #[error("Unknown frame id `{0}`")]
     UnknownFrameID(String),
-
+    #[error("No known relation between found between frame ids `{0}` and `{1}`. The cause might be disjointed trees in the cache, or more then 1 parent per frame (i.e. not a Tree).")]
+    UnknownRelationBetweenFrames(CompactFrameID, CompactFrameID),
 
     // Extrapolation errors
     #[error("Lookup would require extrapolation at time `{0}`, but only time `{1}` is in the buffer")]

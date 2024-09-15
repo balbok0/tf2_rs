@@ -41,18 +41,18 @@ impl TransformStorage {
         frame_id: CompactFrameID,
         child_frame_id: CompactFrameID,
     ) -> Self {
-        Self {
-            rotation: UnitQuaternion::from_quaternion(Quaternion::new(
+        Self::new_from_nalgebra(
+            UnitQuaternion::from_quaternion(Quaternion::new(
                 rotation[3],
                 rotation[0],
                 rotation[1],
                 rotation[2],
             )),
-            translation: Vector3::new(translation[0], translation[1], translation[2]),
+            Vector3::new(translation[0], translation[1], translation[2]),
             stamp,
             frame_id,
-            child_frame_id,
-        }
+            child_frame_id
+        )
     }
 
     pub fn identity(
@@ -60,13 +60,29 @@ impl TransformStorage {
         frame_id: CompactFrameID,
         child_frame_id: CompactFrameID,
     ) -> Self {
-        Self::new(
-            [0., 0., 0., 1.],
-            [0., 0., 0.],
+        Self::new_from_nalgebra(
+            UnitQuaternion::identity(),
+            Vector3::zeros(),
             stamp,
             frame_id,
             child_frame_id
         )
+    }
+
+    pub fn new_from_nalgebra(
+        rotation: UnitQuaternion<f64>,
+        translation: Vector3<f64>,
+        stamp: u64,
+        frame_id: CompactFrameID,
+        child_frame_id: CompactFrameID,
+    ) -> Self {
+        TransformStorage {
+            rotation,
+            translation,
+            stamp,
+            frame_id,
+            child_frame_id,
+        }
     }
 
     pub fn interpolate(
