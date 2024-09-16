@@ -1,0 +1,13 @@
+name: tf2_rs_test_creation
+
+channels:
+  - defaults
+  - conda-forge
+  - robostack-staging
+
+
+dependencies:
+  - python=3.11
+  - ros-noetic-desktop
+  - ros-noetic-rqt-tf-tree
+
