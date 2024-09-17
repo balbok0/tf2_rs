@@ -27,6 +27,7 @@ pub trait TimeCacheInterface {
 
     fn get_oldest_timestamp(&self) -> Option<u64>;
 
+    fn len(&self) -> usize;
 }
 
 #[derive(Debug, Clone, Builder, PartialEq)]
@@ -135,6 +136,10 @@ impl TimeCacheInterface for TimeCache {
     fn clear_list(&mut self) {
         self.storage.clear()
     }
+
+    fn len(&self) -> usize {
+        self.storage.len()
+    }
 }
 
 impl TimeCache {
@@ -234,8 +239,8 @@ impl TimeCache {
     fn prune_list(&mut self) {
         let cut_ts = match self.get_latest_timestamp() {
             Some(dt) => {
-                let acceptable_storage_time = dt as i64 - self.max_storage_time_ns as i64;
-                i64::max(0, acceptable_storage_time) as u64
+                let acceptable_storage_time = dt as i128 - self.max_storage_time_ns as i128;
+                i128::max(0, acceptable_storage_time) as u64
             },
             None => {
                 // Nothing to remove, the store is empty

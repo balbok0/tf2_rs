@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, u64};
 
 use parking_lot::RwLock;
 
@@ -102,6 +102,8 @@ impl<'a> BufferCore<'a> {
                 frame_num,
                 child_frame_num,
             ));
+
+            println!("{} - {}", child_frame_num, frame.len());
         }
 
 
@@ -118,8 +120,7 @@ impl<'a> BufferCore<'a> {
             let new_id = frames.len() as CompactFrameID;
 
             if is_static {
-                frames.push(Box::new(TimeCache::new(Vec::new(), self.cache_time_ns)));
-
+                frames.push(Box::new(StaticCache::new(TransformStorage::identity(u64::MAX, 0, new_id))));
             } else {
                 frames.push(Box::new(TimeCache::new(Vec::new(), self.cache_time_ns)));
             }
@@ -170,9 +171,7 @@ impl<'a> BufferCore<'a> {
             || TF2Error::UnknownFrameID(source_frame.to_string())
         )?;
 
-        // TODO: Implement walk_to_top_parent here and call it.
-
-        Err(TF2Error::Unknown)
+        self.walk_to_top_parent(time, target_id, source_id)
     }
 
 
@@ -181,17 +180,61 @@ impl<'a> BufferCore<'a> {
         time: u64,
         target_id: CompactFrameID,
         source_id: CompactFrameID,
-        frame_chain: &mut Vec<CompactFrameID>
     ) -> Result<TransformStorage, TF2Error> {
         if source_id == target_id {
-            return Ok(TransformStorage::identity(time, source_id, target_id));
+            return Ok(TransformStorage::identity(time, target_id, source_id));
         }
 
-        frame_chain.clear();
+        let time = if time == 0 {
+            self.get_latest_common_time(target_id, source_id).ok_or_else(|| TF2Error::UnknownRelationBetweenFrames(target_id, source_id))?
+        } else {
+            time
+        };
 
+        let mut tf_acc = TransformAccumulator::new();
 
+        let mut frame_id = source_id;
+        let parent_frame = self.get_closest_shared_ancestor(target_id, source_id).ok_or_else(|| TF2Error::UnknownRelationBetweenFrames(target_id, source_id))?;
+        let frames_lock = self.frames_.read();
 
-        Err(TF2Error::Unknown)
+        while frame_id != parent_frame {
+            let frame_cache = frames_lock.get(frame_id as usize).ok_or_else(|| TF2Error::UnknownFrameID(frame_id.to_string()))?;
+
+            let tf_stor = frame_cache.get_data(time)?;
+
+            tf_acc.accum(true, tf_stor);
+
+            frame_id = tf_stor.frame_id;
+        }
+
+        let mut frame_id = target_id;
+        while frame_id != parent_frame {
+            let frame_cache = frames_lock.get(frame_id as usize).ok_or_else(|| TF2Error::UnknownFrameID(frame_id.to_string()))?;
+
+            let tf_stor = frame_cache.get_data(time)?;
+
+            tf_acc.accum(false, tf_stor);
+
+            frame_id = tf_stor.frame_id;
+        }
+
+        let (final_translation, final_rotation) = if parent_frame == target_id {
+            tf_acc.finalize(crate::transform_accumulator::WalkEnding::TargetParentOfSource)
+        } else if parent_frame == source_id {
+            tf_acc.finalize(crate::transform_accumulator::WalkEnding::SourceParentOfTarget)
+        } else {
+            tf_acc.finalize(crate::transform_accumulator::WalkEnding::FullPath)
+        };
+
+        let final_tf = TransformStorage::new_from_nalgebra(
+            final_rotation,
+            final_translation,
+            time,
+            target_id,
+            source_id,
+        );
+
+        Ok(final_tf)
     }
 
     fn get_latest_common_time(
@@ -283,11 +326,91 @@ impl<'a> BufferCore<'a> {
         // No common frame found
         None
     }
+
+    fn get_closest_shared_ancestor(
+        &self,
+        target_id: CompactFrameID,
+        source_id: CompactFrameID,
+    ) -> Option<CompactFrameID> {
+        if target_id == 0 || source_id == 0 {
+            return None;
+        }
+
+        // Both frames are the same
+        if target_id == source_id {
+            return Some(source_id);
+        }
+        let frames_lock = self.frames_.read();
+
+        // Walk from source -> root
+        let mut source_to_root_frame_idxs_stamps = HashSet::new();
+
+        let mut frame_id = source_id;
+        let mut loop_depth = 0;
+        while frame_id != 0 {
+            let frame_cache = frames_lock.get(frame_id as usize)?;
+            let frame_parent = match frame_cache.get_latest_timestamp_and_parent() {
+                Some(x) => x.1,
+                // Top most frame of this tree. Point at the root
+                None => 0,
+            };
+
+            if frame_id == target_id {
+                // Break. Frame found
+                return Some(frame_id);
+            }
+
+            // Update frame id for next iteration
+            source_to_root_frame_idxs_stamps.insert(frame_id);
+            frame_id = frame_parent;
+            loop_depth += 1;
+
+            // Disallow really large depth
+            if loop_depth > MAX_GRAPH_DEPTH {
+                // TODO: Probably should return Result then
+                return None;
+            }
+        }
+
+        // Walk from target to root parent
+        let mut frame_id = target_id;
+        let mut loop_depth = 0;
+        while frame_id != 0 {
+            if source_to_root_frame_idxs_stamps.contains(&frame_id) {
+                return Some(frame_id);
+            }
+
+            let frame_cache = frames_lock.get(frame_id as usize)?;
+            let frame_parent = match frame_cache.get_latest_timestamp_and_parent() {
+                Some(x) => x.1,
+                // Top most frame of this tree. Point at the root
+                None => 0,
+            };
+
+            // Update frame id for next iteration
+            frame_id = frame_parent;
+            loop_depth += 1;
+
+            // Disallow really large depth
+            if loop_depth > MAX_GRAPH_DEPTH {
+                // TODO: Probably should return Result then
+                return None;
+            }
+        }
+
+        // No common frame found
+        None
+    }
 }
 
 // Write tests for this module here.
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use approx::{assert_relative_eq, AbsDiffEq, RelativeEq};
+    use nalgebra::{Quaternion, UnitQuaternion};
+    use serde::de::Deserialize;
+
     use super::*;
 
     fn fake_buffer_core<'a>() -> BufferCore<'a> {
@@ -311,6 +434,7 @@ mod tests {
     }
 
     // Mock implementation of transform stamped
+    #[derive(Debug, Clone, Copy, PartialEq)]
     struct MockTransformStamped<'a>  {
         stamp: u64,
         frame_id: &'a str,
@@ -348,7 +472,7 @@ mod tests {
                 frame_id: frame_id,
                 child_frame_id: child_frame_id,
                 translation: [0.0; 3],
-                rotation: [1.0; 4]
+                rotation: [0.0, 0.0, 0.0, 1.0]
              }
         }
     }
@@ -491,7 +615,7 @@ mod tests {
     fn test_get_latest_common_time() {
         let mut bc = BufferCore::new(10);
         let transform1 = MockTransformStamped::identity(1, "a", "b1");
-        bc.set_transform(&transform1, "a", true).unwrap();
+        bc.set_transform(&transform1, "a", false).unwrap();
 
         let transform2 = MockTransformStamped::identity(1, "a", "c1");
         bc.set_transform(&transform2, "a", false).unwrap();
@@ -559,6 +683,119 @@ mod tests {
         assert_eq!(result, None);
         let result = bc.get_latest_common_time(bc.frame_to_id["b1"], 0);
         assert_eq!(result, None);
+    }
 
+    #[test]
+    fn test_lookup_transform() {
+        let mut bc = BufferCore::new(10);
+
+        let transform1 = MockTransformStamped::identity(1, "a", "b1");
+        bc.set_transform(&transform1, "a", false).unwrap();
+
+        let transform2 = MockTransformStamped::identity(1, "a", "c1");
+        bc.set_transform(&transform2, "a", false).unwrap();
+
+        // Common parent
+        let result = bc.lookup_transform("c1", "b1", 0);
+        assert_eq!(result, Ok(TransformStorage::identity(1, bc.frame_to_id["c1"], bc.frame_to_id["b1"])));
+
+        // Slightly longer chain
+        for i in 2..5 {
+            let frame_id = format!("c{}", i - 1);
+            let child_frame_id = format!("c{}", i);
+            let transform2 = MockTransformStamped::identity(1, &frame_id, &child_frame_id);
+            bc.set_transform(&transform2, "a", false).unwrap();
+        }
+
+        let result = bc.lookup_transform("c4", "b1", 1);
+        assert_eq!(result, Ok(TransformStorage::identity(1, bc.frame_to_id["c4"], bc.frame_to_id["b1"])));
+
+        // Same frame
+        let result = bc.lookup_transform("c4", "c4", 1);
+        assert_eq!(result, Ok(TransformStorage::identity(1, bc.frame_to_id["c4"], bc.frame_to_id["c4"])));
+
+        // Target is direct child of source
+        let result = bc.lookup_transform("c4", "c3", 1);
+        assert_eq!(result, Ok(TransformStorage::identity(1, bc.frame_to_id["c4"], bc.frame_to_id["c3"])));
+
+        // Target is direct parent of source.
+        let result = bc.lookup_transform("c3", "c4", 1);
+        assert_eq!(result, Ok(TransformStorage::identity(1, bc.frame_to_id["c3"], bc.frame_to_id["c4"])));
+
+        // Target is a parent of source. Non-direct
+        let result = bc.lookup_transform("c1", "c4", 1);
+        assert_eq!(result, Ok(TransformStorage::identity(1, bc.frame_to_id["c1"], bc.frame_to_id["c4"])));
+
+        // Target is a child of source. Non-direct
+        let result = bc.lookup_transform("c4", "c1", 1);
+        assert_eq!(result, Ok(TransformStorage::identity(1, bc.frame_to_id["c4"], bc.frame_to_id["c1"])));
+    }
+
+    #[test]
+    fn test_lookup_transform_with_ref() {
+        let mut bc = BufferCore::new(u64::MAX);
+
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("tests/auxiliary_files/buffer_core");
+
+        // First read transforms and create the tree
+        let mut tf_file = d.clone();
+        tf_file.push("lookup_transform_with_ref_transforms.yaml");
+        let f = std::fs::File::open(tf_file).unwrap();
+        for document in serde_yaml::Deserializer::from_reader(f) {
+            let data = serde_yaml::Value::deserialize(document).unwrap();
+
+            let frame_id = data.get("frame_id").unwrap().as_str().unwrap();
+            let child_frame_id = data.get("child_frame_id").unwrap().as_str().unwrap();
+            let is_static = data.get("is_static").unwrap().as_bool().unwrap();
+            let stamp = data.get("timestamp").unwrap().as_u64().unwrap();
+            let rotation: Vec<f64> = data.get("rotation").unwrap().as_sequence().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+            let translation: Vec<f64> = data.get("translation").unwrap().as_sequence().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+
+            let tf = MockTransformStamped {
+                stamp,
+                frame_id,
+                child_frame_id,
+                translation: translation.try_into().unwrap(),
+                rotation: rotation.try_into().unwrap()
+            };
+            bc.set_transform(&tf, "", is_static).unwrap();
+        }
+
+        // Then load inputs and outputs
+        let mut inputs_file = d.clone();
+        inputs_file.push("lookup_transform_with_ref_inputs.yaml");
+        let inputs_f = std::fs::File::open(inputs_file).unwrap();
+        let mut outputs_file = d.clone();
+        outputs_file.push("lookup_transform_with_ref_outputs.yaml");
+        let outputs_f = std::fs::File::open(outputs_file).unwrap();
+        for (input_document, output_document) in serde_yaml::Deserializer::from_reader(inputs_f).zip(serde_yaml::Deserializer::from_reader(outputs_f)) {
+            let input_data = serde_yaml::Value::deserialize(input_document).unwrap();
+            let output_data = serde_yaml::Value::deserialize(output_document).unwrap();
+
+            // Read input
+            let frame_id = input_data.get("frame_id").unwrap().as_str().unwrap();
+            let child_frame_id = input_data.get("child_frame_id").unwrap().as_str().unwrap();
+            let time = input_data.get("time").unwrap().as_u64().unwrap();
+
+            // Read output
+            let expected_frame_id = output_data.get("frame_id").unwrap().as_str().unwrap();
+            let expected_child_frame_id = output_data.get("child_frame_id").unwrap().as_str().unwrap();
+            let expected_stamp = output_data.get("timestamp").unwrap().as_u64().unwrap();
+            let expected_rotation: Vec<f64> = output_data.get("rotation").unwrap().as_sequence().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+            let actual_transform = bc.lookup_transform(frame_id, child_frame_id, time);
+
+            assert!(actual_transform.is_ok(), "Transform errored with {actual_transform:?}");
+            let actual_transform = actual_transform.unwrap();
+            assert_eq!(bc.id_to_frame[actual_transform.frame_id as usize], expected_frame_id);
+            assert_eq!(bc.id_to_frame[actual_transform.child_frame_id as usize], expected_child_frame_id);
+            assert!(vec![expected_stamp, time].contains(&actual_transform.stamp));
+            assert_relative_eq!(actual_transform.rotation, UnitQuaternion::from_quaternion(Quaternion::new(
+                expected_rotation[3],
+                expected_rotation[0],
+                expected_rotation[1],
+                expected_rotation[2],
+            )), epsilon = 1e-6);
+        }
     }
 }

@@ -46,6 +46,10 @@ impl TimeCacheInterface for StaticCache {
     fn get_oldest_timestamp(&self) -> Option<u64> {
         None
     }
+
+    fn len(&self) -> usize {
+        1
+    }
 }
 
 impl StaticCache {
