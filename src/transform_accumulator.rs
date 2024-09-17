@@ -1,10 +1,11 @@
-use nalgebra::{AbstractRotation, UnitQuaternion, Vector3};
+use nalgebra::{UnitQuaternion, Vector3};
 
-use crate::{error::TF2Error, transform_storage::TransformStorage, types::CompactFrameID};
+use crate::transform_storage::TransformStorage;
 
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum WalkEnding {
+    #[allow(dead_code)]
     Identity,
     TargetParentOfSource,
     SourceParentOfTarget,

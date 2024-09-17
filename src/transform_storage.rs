@@ -1,4 +1,6 @@
-use nalgebra::{Quaternion, Rotation3, UnitQuaternion, Vector3};
+use std::ops;
+
+use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::types::CompactFrameID;
 
@@ -140,5 +142,32 @@ impl TransformStorage {
             self.rotation[2],
         ));
         quat.transform_vector(pos)
+    }
+}
+
+impl ops::Mul<TransformStorage> for TransformStorage {
+    type Output = TransformStorage;
+
+    fn mul(self, rhs: TransformStorage) -> Self::Output {
+        // Ensure common frame
+        if self.frame_id == rhs.child_frame_id {
+            TransformStorage {
+                rotation: self.rotation * rhs.rotation,
+                translation: self.translation + rhs.translation,
+                stamp: self.stamp,
+                frame_id: self.frame_id,
+                child_frame_id: self.child_frame_id,
+            }
+        } else if self.child_frame_id == rhs.frame_id {
+            rhs.mul(self)
+        } else {
+            panic!(
+                "Could not find common frame. self contains {} -> {} and other contains {} -> {}",
+                self.child_frame_id,
+                self.frame_id,
+                rhs.child_frame_id,
+                rhs.frame_id,
+            )
+        }
     }
 }

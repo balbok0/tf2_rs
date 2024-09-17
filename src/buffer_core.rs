@@ -174,6 +174,18 @@ impl<'a> BufferCore<'a> {
         self.walk_to_top_parent(time, target_id, source_id)
     }
 
+    pub fn lookup_transform_full(
+        &self,
+        target_frame: &str,
+        source_frame: &str,
+        fixed_frame: &str,
+        time: u64
+    ) -> Result<TransformStorage, TF2Error> {
+        let source_to_fixed = self.lookup_transform(fixed_frame, source_frame, time)?;
+        let fixed_to_target = self.lookup_transform(target_frame, fixed_frame, time)?;
+
+        Ok(source_to_fixed * fixed_to_target)
+    }
 
     fn walk_to_top_parent(
         &self,
