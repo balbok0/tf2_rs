@@ -264,7 +264,6 @@ impl TimeCache {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeDelta;
     use nalgebra::{Quaternion, UnitQuaternion, Vector3};
     use rand::{self, Rng, SeedableRng as _};
 
@@ -581,7 +580,7 @@ mod tests {
 
         let offset = 555;
 
-        for i in 1..runs  {
+        for _i in 1..runs  {
           for step in 0..2usize {
 
             x_values[step] = 10.0 * rng.gen::<f64>();
