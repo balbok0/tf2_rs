@@ -251,7 +251,7 @@ def generate_lookup_transform_full_tests(
             "target_time": target_time.to_nsec(),
             "source_frame": child_frame_id,
             "source_time": source_time.to_nsec(),
-            "fixed_frame_id": fixed_frame_id,
+            "fixed_frame": fixed_frame_id,
         })
         outputs.append({
             "timestamp": transform.header.stamp.to_nsec(),
