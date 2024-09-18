@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, u64};
+use std::collections::{HashMap, HashSet};
 
 use parking_lot::RwLock;
 
@@ -35,7 +35,7 @@ impl BufferCore {
             frame_to_id,
             id_to_frame: vec!["NO_PARENT".to_string()],
             frame_authority: HashMap::new(),
-            cache_time_ns: cache_time_ns,
+            cache_time_ns,
         }
 
     }
@@ -233,7 +233,7 @@ impl BufferCore {
         }
 
         let time = if time == 0 {
-            self.get_common_time_bounds(target_id, source_id).ok_or_else(|| TF2Error::UnknownRelationBetweenFrames(target_id, source_id))?.1
+            self.get_common_time_bounds(target_id, source_id).ok_or(TF2Error::UnknownRelationBetweenFrames(target_id, source_id))?.1
         } else {
             time
         };
@@ -241,7 +241,7 @@ impl BufferCore {
         let mut tf_acc = TransformAccumulator::new();
 
         let mut frame_id = source_id;
-        let parent_frame = self.get_closest_shared_ancestor(target_id, source_id).ok_or_else(|| TF2Error::UnknownRelationBetweenFrames(target_id, source_id))?;
+        let parent_frame = self.get_closest_shared_ancestor(target_id, source_id).ok_or(TF2Error::UnknownRelationBetweenFrames(target_id, source_id))?;
         let frames_lock = self.frames_.read();
 
         while frame_id != parent_frame {
@@ -326,14 +326,14 @@ impl BufferCore {
                     path_oldest_time.max(
                         source_to_root_frame_idxs_stamps
                          .values()
-                             .map(|x| x.0 as u64)
+                             .map(|x| x.0)
                              .max()
                              .unwrap_or(path_oldest_time),
                     ),
                     path_latest_time.min(
                         source_to_root_frame_idxs_stamps
                         .values()
-                            .map(|x| x.1 as u64)
+                            .map(|x| x.1)
                             .min()
                             .unwrap_or(path_latest_time)
                     )

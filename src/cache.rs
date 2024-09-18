@@ -28,6 +28,10 @@ pub trait TimeCacheInterface {
     fn get_oldest_timestamp(&self) -> Option<u64>;
 
     fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[derive(Debug, Clone, Builder, PartialEq)]
