@@ -10,4 +10,7 @@ dependencies:
   - python=3.11
   - ros-noetic-desktop
   - ros-noetic-rqt-tf-tree
+  - pip
+  - pip:
+    - tqdm
 

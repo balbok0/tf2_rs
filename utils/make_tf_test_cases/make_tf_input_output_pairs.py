@@ -1,17 +1,23 @@
 import argparse
 import random
 from pathlib import Path
+from typing import Dict, List
 
 import numpy as np
 import rosbag
 import rospy
 import tf2_ros
+import tqdm
 import yaml
 
-RNG = random.Random(20111111)
+RNG = random.Random(20111111)  # Skyrim, because why not
 
 
 def populate_tf_tree(buffer: tf2_ros.Buffer):
+    """
+    Creates a random tree of transforms, of a valid structure.
+    Useful for stress-testing transforms of the buffer.
+    """
     def _create_random_tf(
         frame_id: str,
         child_frame_id: str,
@@ -89,6 +95,9 @@ def populate_tf_tree(buffer: tf2_ros.Buffer):
 
 
 def populate_tf_tree_from_bag(buffer: tf2_ros.Buffer, bag_path: Path):
+    """Loads a TF Tree from a ROS1 Bag.
+    This is useful for simulating real world scenarios, but may not include all of the edge cases that `populate_tf_tree` can.
+    """
     bag = rosbag.Bag(str(bag_path))
     transforms = []
 
@@ -133,31 +142,22 @@ def populate_tf_tree_from_bag(buffer: tf2_ros.Buffer, bag_path: Path):
     return transforms, min_times, max_times, all_frames
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--bag-file", type=Path, help="If realistic is specified, this path is used", default=Path(__file__).parent / "tfs.bag")
-    parser.add_argument("--realistic", action="store_true", help="If set, the bag file is used to generate transforms. Otherwise, random tree is generated")
-    args = parser.parse_args()
-
-    # Generate TF Tree and other artifacts
-    buffer = tf2_ros.Buffer(cache_time=rospy.Duration.from_sec(1e9))
-    if args.realistic:
-        transforms, min_times, max_times, all_frames = populate_tf_tree_from_bag(buffer, args.bag_file)
-    else:
-        transforms, min_times, max_times, all_frames = populate_tf_tree(buffer)
-
-    with open("transforms.yaml", "w") as f:
-        yaml.safe_dump_all(transforms, f)
-
-    # Next generate example inputs
-    inputs = []
-    outputs = []
+def generate_lookup_transform_tests(
+    buffer,
+    transforms,
+    min_times: Dict[str, rospy.Time],
+    max_times: Dict[str, rospy.Time],
+    frame_strings: List[str]
+):
     num_examples = 0
-    num_rotation_samples = 0
-    frame_strings = list(all_frames)
+    total_examples = 100
     min_ts = max(min_times.values())
     max_ts = max(max_times.values())
-    while num_examples < 100:
+
+    inputs = []
+    outputs = []
+    pbar = tqdm.tqdm(desc="Generate lookup_transform", total=total_examples, leave=False)
+    while num_examples < total_examples:
         frame_id, child_frame_id = RNG.choices(frame_strings, k=2)
 
         # We want to have complex examples
@@ -201,12 +201,103 @@ def main():
         })
 
         num_examples += 1
+        pbar.update()
 
     # Save inputs and outputs
-    with open("inputs.yaml", mode="w") as f:
+    with open("lookup_transform_with_ref_transforms.yaml", "w") as f:
+        yaml.safe_dump_all(transforms, f)
+    with open("lookup_transform_with_ref_inputs.yaml", mode="w") as f:
         yaml.safe_dump_all(inputs, f)
-    with open("outputs.yaml", mode="w") as f:
+    with open("lookup_transform_with_ref_outputs.yaml", mode="w") as f:
         yaml.safe_dump_all(outputs, f)
+
+
+def generate_lookup_transform_full_tests(
+    buffer,
+    transforms,
+    min_times: Dict[str, rospy.Time],
+    max_times: Dict[str, rospy.Time],
+    frame_strings: List[str]
+):
+    num_examples = 0
+    total_examples = 100
+    min_ts = max(min_times.values())
+    max_ts = max(max_times.values())
+
+    inputs = []
+    outputs = []
+    pbar = tqdm.tqdm(desc="Generate lookup_transform_full", total=total_examples, leave=False)
+    while num_examples < total_examples:
+        frame_id, child_frame_id, fixed_frame_id = RNG.choices(frame_strings, k=3)
+
+        # We want to have complex examples
+        if len({frame_id, child_frame_id, fixed_frame_id}) != 3:
+            continue
+
+        target_time = RNG.uniform(min_times.get(frame_id, min_ts), max_times.get(frame_id, max_ts))
+        source_time = RNG.uniform(min_times.get(child_frame_id, min_ts), max_times.get(child_frame_id, max_ts))
+
+        try:
+            transform = buffer.lookup_transform_full(
+                frame_id, target_time,
+                child_frame_id, source_time,
+                fixed_frame_id
+            )
+        except:
+            pass
+
+        inputs.append({
+            "target_frame": frame_id,
+            "target_time": target_time.to_nsec(),
+            "source_frame": child_frame_id,
+            "source_time": source_time.to_nsec(),
+            "fixed_frame_id": fixed_frame_id,
+        })
+        outputs.append({
+            "timestamp": transform.header.stamp.to_nsec(),
+            "frame_id": transform.header.frame_id,
+            "child_frame_id": transform.child_frame_id,
+            "translation": [
+                transform.transform.translation.x,
+                transform.transform.translation.y,
+                transform.transform.translation.z,
+            ],
+            "rotation": [
+                transform.transform.rotation.x,
+                transform.transform.rotation.y,
+                transform.transform.rotation.z,
+                transform.transform.rotation.w
+            ],
+        })
+
+        num_examples += 1
+        pbar.update()
+
+    # Save inputs and outputs
+    with open("lookup_transform_full_with_ref_transforms.yaml", "w") as f:
+        yaml.safe_dump_all(transforms, f)
+    with open("lookup_transform_full_with_ref_inputs.yaml", mode="w") as f:
+        yaml.safe_dump_all(inputs, f)
+    with open("lookup_transform_full_with_ref_outputs.yaml", mode="w") as f:
+        yaml.safe_dump_all(outputs, f)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bag-file", type=Path, help="If realistic is specified, this path is used", default=Path(__file__).parent / "tfs.bag")
+    parser.add_argument("--realistic", action="store_true", help="If set, the bag file is used to generate transforms. Otherwise, random tree is generated")
+    args = parser.parse_args()
+
+    # Generate TF Tree and other artifacts
+    buffer = tf2_ros.Buffer(cache_time=rospy.Duration.from_sec(1e9))
+    if args.realistic:
+        transforms, min_times, max_times, all_frames = populate_tf_tree_from_bag(buffer, args.bag_file)
+    else:
+        transforms, min_times, max_times, all_frames = populate_tf_tree(buffer)
+    frame_strings = list(all_frames)
+
+    # Generate lookup transform examples
+    generate_lookup_transform_tests(buffer, transforms, min_times, max_times, frame_strings)
+    generate_lookup_transform_full_tests(buffer, transforms, min_times, max_times, frame_strings)
 
 
 if __name__ == '__main__':
