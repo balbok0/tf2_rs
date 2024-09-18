@@ -246,6 +246,11 @@ def generate_lookup_transform_full_tests(
         except:
             pass
 
+        # Soooo, tf2 messes up this transform is intermediate frame causes extrapolation.
+        # It essentially stops at that frame.
+        if frame_id != transform.header.frame_id or child_frame_id != transform.child_frame_id:
+            continue
+
         inputs.append({
             "target_frame": frame_id,
             "target_time": target_time.to_nsec(),
