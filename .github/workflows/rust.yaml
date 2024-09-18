@@ -7,6 +7,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   RUST_LOG: "cargo_tarpaulin=trace,llvm_profparser=trace"
+  RUSTFLAGS: "-Dwarnings"
 
 jobs:
   linux:
@@ -36,6 +37,8 @@ jobs:
         run: cargo check --no-default-features
       - name: test
         run: cargo test
+      - name: Add clippy
+        run: rustup component add clippy
       - name: Clippy
         run: cargo clippy --all -- -D warnings
   windows:
@@ -66,7 +69,7 @@ jobs:
           - stable
           - nightly
         target:
-          - x86_64-apple-darwin	
+          - x86_64-apple-darwin
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
