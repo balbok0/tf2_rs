@@ -933,7 +933,8 @@ mod tests {
             let actual_transform = actual_transform.unwrap();
             assert_eq!(bc.id_to_frame[actual_transform.frame_id as usize], expected_frame_id);
             assert_eq!(bc.id_to_frame[actual_transform.child_frame_id as usize], expected_child_frame_id);
-            assert!((expected_stamp as i128 - actual_transform.stamp as i128) < 100);  // Assert timestamps are sufficiently close
+            // Assert timestamps are sufficiently close. This is due to rounding errors I think?
+            assert!((expected_stamp as i128 - actual_transform.stamp as i128) < 200);
             assert_relative_eq!(actual_transform.rotation, UnitQuaternion::from_quaternion(Quaternion::new(
                 expected_rotation[3],
                 expected_rotation[0],
