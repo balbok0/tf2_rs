@@ -36,6 +36,10 @@ pub struct TimeCache {
     storage: Vec<TransformStorage>,
     #[builder(default = "10_000_000_000")]
     max_storage_time_ns: u64,
+    #[builder(default = "None")]
+    child_id: Option<CompactFrameID>,
+    #[builder(default = "None")]
+    parent_id: Option<CompactFrameID>,
 }
 
 impl TimeCacheInterface for TimeCache {
@@ -87,7 +91,6 @@ impl TimeCacheInterface for TimeCache {
         &mut self,
         new_data: &TransformStorage,
     ) -> bool {
-        // TODO: Finish me
         // From original TF2: https://github.com/ros2/geometry2/blob/ros2/tf2/src/cache.cpp#L251-L258
         // In order to minimize the number of times we iterate over this data, we:
         // (1) Prune all old data first, regardless if new_data is added,
@@ -130,6 +133,23 @@ impl TimeCacheInterface for TimeCache {
         // (4) If we the data is not duplicated, then we simply insert new_data at
         //     the point found in (2).
         self.storage.insert(idx, *new_data);
+
+        // (5) If we are inserting data, verify that it has consistent ids
+        if let Some(parent_id) = self.parent_id {
+            if parent_id != new_data.frame_id {
+                log::warn!("Parent ID mismatch: {} vs {}. This hints at a non-TFTree structure, which will leads to inconsistent results.", parent_id, new_data.frame_id);
+            }
+        } else {
+            self.parent_id = Some(new_data.frame_id);
+        }
+        if let Some(child_id) = self.child_id {
+            if child_id != new_data.child_frame_id {
+                log::warn!("Child ID mismatch: {} vs {}. This hints at a non-TFTree structure, which will leads to inconsistent results.", child_id, new_data.child_frame_id);
+             }
+         } else  {
+            self.child_id = Some(new_data.child_frame_id);
+        }
+
         true
     }
 
@@ -147,10 +167,11 @@ impl TimeCache {
         storage: Vec<TransformStorage>,
         max_storage_time_ns: u64,
     ) -> Self {
-        TimeCache {
-            storage,
-            max_storage_time_ns
-        }
+        TimeCacheBuilder::create_empty()
+            .storage(storage)
+            .max_storage_time_ns(max_storage_time_ns)
+            .build()
+            .unwrap()
     }
 
     pub fn get_all_items(&self) -> &Vec<TransformStorage> {
