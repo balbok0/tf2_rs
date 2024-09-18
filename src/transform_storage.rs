@@ -152,10 +152,10 @@ impl ops::Mul<TransformStorage> for TransformStorage {
         // Ensure common frame
         if self.frame_id == rhs.child_frame_id {
             TransformStorage {
-                rotation: self.rotation * rhs.rotation,
+                rotation: rhs.rotation * self.rotation,
                 translation: self.translation + rhs.translation,
-                stamp: self.stamp,
-                frame_id: self.frame_id,
+                stamp: (self.stamp + rhs.stamp) / 2,
+                frame_id: rhs.frame_id,
                 child_frame_id: self.child_frame_id,
             }
         } else if self.child_frame_id == rhs.frame_id {

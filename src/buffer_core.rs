@@ -149,14 +149,19 @@ impl BufferCore {
     pub fn lookup_transform_full(
         &self,
         target_frame: &str,
+        target_time: u64,
         source_frame: &str,
+        source_time: u64,
         fixed_frame: &str,
-        time: u64
     ) -> Result<TransformStorage, TF2Error> {
-        let source_to_fixed = self.lookup_transform(fixed_frame, source_frame, time)?;
-        let fixed_to_target = self.lookup_transform(target_frame, fixed_frame, time)?;
+        let fixed_to_target = self.lookup_transform(target_frame, fixed_frame, target_time)?;
+        let source_to_fixed = self.lookup_transform(fixed_frame, source_frame, source_time)?;
 
-        Ok(source_to_fixed * fixed_to_target)
+        let mut result = source_to_fixed * fixed_to_target;
+        // Expected timestamp is that of a target
+        result.stamp = target_time;
+
+        Ok(result)
     }
 
     pub fn can_transform(&self, target_frame: &str, source_frame: &str, fixed_frame: &str, time: u64) -> bool {
@@ -856,6 +861,79 @@ mod tests {
             assert_eq!(bc.id_to_frame[actual_transform.frame_id as usize], expected_frame_id);
             assert_eq!(bc.id_to_frame[actual_transform.child_frame_id as usize], expected_child_frame_id);
             assert!(vec![expected_stamp, time].contains(&actual_transform.stamp));
+            assert_relative_eq!(actual_transform.rotation, UnitQuaternion::from_quaternion(Quaternion::new(
+                expected_rotation[3],
+                expected_rotation[0],
+                expected_rotation[1],
+                expected_rotation[2],
+            )), epsilon = 1e-6);
+        }
+    }
+
+
+    #[test]
+    fn test_lookup_transform_full_with_ref() {
+        let mut bc = BufferCore::new(u64::MAX);
+
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("tests/auxiliary_files/buffer_core");
+
+        // First read transforms and create the tree
+        let mut tf_file = d.clone();
+        tf_file.push("lookup_transform_full_with_ref_transforms.yaml");
+        let f = std::fs::File::open(tf_file).unwrap();
+        for document in serde_yaml::Deserializer::from_reader(f) {
+            let data = serde_yaml::Value::deserialize(document).unwrap();
+
+            let frame_id = data.get("frame_id").unwrap().as_str().unwrap();
+            let child_frame_id = data.get("child_frame_id").unwrap().as_str().unwrap();
+            let is_static = data.get("is_static").unwrap().as_bool().unwrap();
+            let stamp = data.get("timestamp").unwrap().as_u64().unwrap();
+            let rotation: Vec<f64> = data.get("rotation").unwrap().as_sequence().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+            let translation: Vec<f64> = data.get("translation").unwrap().as_sequence().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+
+            let tf = MockTransformStamped {
+                stamp,
+                frame_id,
+                child_frame_id,
+                translation: translation.try_into().unwrap(),
+                rotation: rotation.try_into().unwrap()
+            };
+            bc.set_transform(&tf, "", is_static).unwrap();
+        }
+
+        // Then load inputs and outputs
+        let mut inputs_file = d.clone();
+        inputs_file.push("lookup_transform_full_with_ref_inputs.yaml");
+        let inputs_f = std::fs::File::open(inputs_file).unwrap();
+        let mut outputs_file = d.clone();
+        outputs_file.push("lookup_transform_full_with_ref_outputs.yaml");
+        let outputs_f = std::fs::File::open(outputs_file).unwrap();
+        for (input_document, output_document) in serde_yaml::Deserializer::from_reader(inputs_f).zip(serde_yaml::Deserializer::from_reader(outputs_f)) {
+            let input_data = serde_yaml::Value::deserialize(input_document).unwrap();
+            let output_data = serde_yaml::Value::deserialize(output_document).unwrap();
+
+            // Read input
+            let target_frame = input_data.get("target_frame").unwrap().as_str().unwrap();
+            let target_time = input_data.get("target_time").unwrap().as_u64().unwrap();
+            let source_frame = input_data.get("source_frame").unwrap().as_str().unwrap();
+            let source_time = input_data.get("source_time").unwrap().as_u64().unwrap();
+            let fixed_frame = input_data.get("fixed_frame").unwrap().as_str().unwrap();
+
+            // Read output
+            let expected_frame_id = output_data.get("frame_id").unwrap().as_str().unwrap();
+            let expected_child_frame_id = output_data.get("child_frame_id").unwrap().as_str().unwrap();
+            let expected_stamp = output_data.get("timestamp").unwrap().as_u64().unwrap();
+            let expected_rotation: Vec<f64> = output_data.get("rotation").unwrap().as_sequence().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+            let actual_transform = bc.lookup_transform_full(
+                target_frame, target_time,
+                source_frame, source_time, fixed_frame);
+
+            assert!(actual_transform.is_ok(), "Transform errored with {actual_transform:?}");
+            let actual_transform = actual_transform.unwrap();
+            assert_eq!(bc.id_to_frame[actual_transform.frame_id as usize], expected_frame_id);
+            assert_eq!(bc.id_to_frame[actual_transform.child_frame_id as usize], expected_child_frame_id);
+            assert!((expected_stamp as i128 - actual_transform.stamp as i128) < 100);  // Assert timestamps are sufficiently close
             assert_relative_eq!(actual_transform.rotation, UnitQuaternion::from_quaternion(Quaternion::new(
                 expected_rotation[3],
                 expected_rotation[0],
