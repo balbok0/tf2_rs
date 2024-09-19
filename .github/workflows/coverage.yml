@@ -27,5 +27,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.version }}
+      - name: install tarpaulin
+        run: cargo install cargo-tarpaulin
       - name: coverage
         run: cargo tarpaulin --engine llvm --follow-exec --post-test-delay 10 --coveralls ${{ secrets.COVERALLS_TOKEN }}
